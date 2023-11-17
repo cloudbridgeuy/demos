@@ -5,7 +5,7 @@ Description: "Este Template de CloudFormation contiene los recursos iniciales ne
 Parameters:
   DBPassword:
     NoEcho: true
-    Description: Password de administración de la base de datos
+    Description: Password de administracion de la base de datos
     Type: String
     MinLength: 8
   DBName:
@@ -14,27 +14,27 @@ Parameters:
   DBUser:
     Description: Usuario administrador
     Type: String
-  DBSubnetGroupName:
-    Description: Nombre del SubnetGroup de la base de datos
-    Type: String
   VpcId:
     Description: Id del VPC
     Type: String
   KeyName:
-    Description: Nombre de la llave SSH para usar con el bastión
+    Description: Nombre de la llave SSH para usar con el bastion
     Type: String
-  PublicSubnet:
-    Description: Id de la Subnet donde se instalará la base de datos.
+  SubnetIdA:
+    Description: Id A de la Subnet donde se podrá acceder a la base de datos.
+    Type: String
+  SubnetIdB:
+    Description: Id B de la Subnet donde se podrá acceder a la base de datos.
     Type: String
   ImageId:
-    Description: AMI del servidor bastión
+    Description: AMI del servidor bastion
     Type: String
 
 Resources:
   DB:
     Type: "AWS::RDS::DBInstance"
     Properties:
-      DBInstanceClass: db.t2.micro
+      DBInstanceClass: db.t4g.small
       AllocatedStorage: 20
       DBName: !Ref DBName
       Engine: postgres
@@ -42,15 +42,23 @@ Resources:
       MasterUserPassword: !Ref DBPassword
       VPCSecurityGroups:
         - !Ref DBSecurityGroup
-      DBSubnetGroupName: !Ref DBSubnetGroupName
+      DBSubnetGroupName: !Ref DBSubnetGroup
       StorageEncrypted: true
       KmsKeyId: "alias/aws/rds"
       PubliclyAccessible: false
 
+  DBSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupDescription: "Subnet Group para la base de datos"
+      SubnetIds:
+        - !Ref SubnetIdA
+        - !Ref SubnetIdB
+
   DBSecurityGroup:
     Type: "AWS::EC2::SecurityGroup"
     Properties:
-      GroupDescription: Permitir acceso a la base de datos desde el servidor bastión
+      GroupDescription: Permitir acceso a la base de datos desde el servidor bastion
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -75,9 +83,35 @@ Resources:
       InstanceType: t2.micro
       KeyName: !Ref KeyName
       ImageId: !Ref ImageId
-      SubnetId: !Ref PublicSubnet
+      SubnetId: !Ref SubnetIdA
       SecurityGroupIds:
         - !Ref BastionSecurityGroup
+
+  PrincipalKmsKey:
+    Type: "AWS::KMS::Key"
+    Properties:
+      Description: "Llave KMS para copiar los snapshots creados por RDS."
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: "Id-Kms-1"
+        Statement:
+          - Sid: "Asignacion de perimisos"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: "Permitir el uso con RDS"
+            Effect: "Allow"
+            Principal:
+              Service: "rds.amazonaws.com"
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
 
 Outputs:
   DBInstanceEndpoint:
@@ -87,3 +121,7 @@ Outputs:
   BastionHostPublicIP:
     Description: The public IP address of the bastion host
     Value: !GetAtt BastionHost.PublicIp
+
+  PrincipalKmsKeyArn:
+    Description: "The ARN of the KMS Key for RDS snapshots"
+    Value: !GetAtt PrincipalKmsKey.Arn

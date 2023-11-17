@@ -1,0 +1,34 @@
+[
+  {
+    "ParameterKey": "DBPassword",
+    "ParameterValue": "cloudbridgeuy"
+  },
+  {
+    "ParameterKey": "DBName",
+    "ParameterValue": "cloudbridgeuy"
+  },
+  {
+    "ParameterKey": "DBUser",
+    "ParameterValue": "cloudbridgeuy"
+  },
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-057f79294a5e3c1f4"
+  },
+  {
+    "ParameterKey": "SubnetIdA",
+    "ParameterValue": "subnet-09874c3dc69b50c4b"
+  },
+  {
+    "ParameterKey": "SubnetIdB",
+    "ParameterValue": "subnet-06c645ecbdda18c0f"
+  },
+  {
+    "ParameterKey": "KeyName",
+    "ParameterValue": "id_rsa_cloudbridge_dba_rsa"
+  },
+  {
+    "ParameterKey": "ImageId",
+    "ParameterValue": "ami-076c7acfc9e8ee57d"
+  }
+]
