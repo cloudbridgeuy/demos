@@ -77,6 +77,7 @@ usage() {
   printf "\n\033[4m%s\033[0m\n" "Commands:"
   cat <<EOF
   cold-start .... Handle cold-start resources
+  snapshots ..... Handle snapshots
 EOF
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
@@ -107,6 +108,10 @@ parse_arguments() {
   case $action in
     cold-start)
       action="cold-start"
+      input=("${input[@]:1}")
+      ;;
+    snapshots)
+      action="snapshots"
       input=("${input[@]:1}")
       ;;
     -h|--help)
@@ -153,6 +158,38 @@ cold-start() {
 	# shellcheck disable=SC2154
 	"$sub" ${input[@]}
 }
+snapshots_usage() {
+  printf "Handle snapshots\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  snapshots [OPTIONS]\n"
+  printf "  snapshots -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_snapshots_arguments() {
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      *)
+        break
+        ;;
+    esac
+  done
+}
+# Handle snapshots
+snapshots() {
+  # Parse command arguments
+  parse_snapshots_arguments "$@"
+
+  local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./snapshots.sh"
+	# shellcheck disable=SC2068
+	# shellcheck disable=SC2154
+	"$sub" ${input[@]}
+}
 
 run() {
   declare -A deps=()
@@ -165,8 +202,12 @@ run() {
       cold-start "${input[@]}"
       exit
       ;;
+    "snapshots")
+      snapshots "${input[@]}"
+      exit
+      ;;
     "")
-      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "cold-start" >&2
+      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "cold-start, snapshots" >&2
       usage >&2
       exit 1
       ;;
