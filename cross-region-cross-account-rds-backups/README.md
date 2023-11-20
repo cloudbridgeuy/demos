@@ -1,40 +1,40 @@
 # Backups Cross-Region y Cross-Account
 
-El cliente requiere la configuración de respaldos de una base de datos RDS entre cuentas y entre regiones. En total, cuenta con 5 bases de datos que debe respaldar en esta modalidad, dos de las cuales se encuentran encriptadas con la llave KMS por defecto de `aws/rds` gestionada por AWS.
+El cliente requiere la configuración de respaldos de una base de datos RDS entre cuentas y entre regiones. En total, tiene 5 bases de datos que deben respaldarse de esta manera, dos de las cuales están encriptadas con la clave KMS por defecto de `aws/rds` gestionada por AWS.
 
-> El uso de la llave `aws/rds` para la encriptación de las bases de datos hace imposible el uso de AWS Backups para la solución.
+> El uso de la clave `aws/rds` para la encriptación de las bases de datos impide el uso de AWS Backups para la solución.
 
-Dada esta situación, se busca conseguir el mismo nivel de respaldo explotando las funcionalidades de compartir y copiar snapshots de RDS. Al momento de crear una copia de un snapshot, podemos elegir una nueva llave para encriptar el mismo. Esto nos permite utilizar distintas llaves para mantener la seguridad de los snapshots entre cuentas.
+Ante esta situación, se propone alcanzar el mismo nivel de respaldo aprovechando las funcionalidades de compartir y copiar snapshots de RDS. Al crear una copia de un snapshot, se puede seleccionar una nueva clave para encriptarlo. Esto permite utilizar diferentes claves para asegurar la protección de los snapshots entre cuentas.
 
 ## Prueba de Concepto
 
-La prueba de concepto estará centrada en dos regiones: `us-east-1` y `us-west-1`, y utilizará dos cuentas de AWS: `primary` y `secondary` utilizando las mismas regiones.
+La prueba de concepto se centrará en dos regiones: `us-east-1` y `us-west-1`, y usará dos cuentas de AWS: `primary` y `secondary`, ambas en las mismas regiones.
 
-Para realizar la prueba de concepto vamos a necesitar ciertos recursos iniciales los siguientes recursos:
+Para llevar a cabo la prueba de concepto, necesitaremos los siguientes recursos iniciales:
 
-- Una base de datos RDS encriptada con la llave por defecto `aws/rds`.
-- Una llave de encriptación KMS gestionada por nosotros, compartida con la segunda cuenta y copiada con la cuenta secundaria.
+- Una base de datos RDS encriptada con la clave por defecto `aws/rds`.
+- Una clave de encriptación KMS gestionada por nosotros, compartida con la segunda cuenta y replicada en la cuenta secundaria.
 
 ### Preguntas a responder
 
-- ¿Como podemos reaccionar ante la creación de una nueva snapshot en RDS para copiar la misma a la región de contingencia?
-- ¿Cómo podemos reaccionar al finalizado de la copia del snapshot en la región de contingencia para realizar la copia a la cuenta de contingencia?
+- ¿Cómo podemos reaccionar ante la creación de un nuevo snapshot en RDS para copiarlo a la región de contingencia?
+- ¿Cómo podemos reaccionar al finalizar la copia del snapshot en la región de contingencia para realizar la copia en la cuenta de contingencia?
 
 ### Procedimiento
 
-#### Creación de los recursos iniciales.
+#### Creación de los recursos iniciales
 
-Las cuentas `primary` y `secondary` se crean a traves de AWS Organizations. Ambas contarán con un usuario llamado `dba` con permisos de adminstrador sobre ambas.
+Las cuentas `primary` y `secondary` se crean a través de AWS Organizations. Ambas contarán con un usuario llamado `dba` con permisos de administrador.
 
-La red a utilizar será la VPN por defecto que viene inicializada en todas las regiones. Una instancia `micro` será utilizada para lanzar la base de datos. Luego se creará la llave KMS que se compartira entre regiones y otras cuentas.
+La red a utilizar será la VPC por defecto que viene preconfigurada en todas las regiones. Se utilizará una instancia `micro` para lanzar la base de datos. Luego, se creará la clave KMS que se compartirá entre regiones y cuentas.
 
-Para simplificar la ejecución de comandos en las tres cuents se generarón los siguientes perfiles:
+Para simplificar la ejecución de comandos en las cuentas, se generaron los siguientes perfiles:
 
-- `cloudbridge-dba-primary`: Cuenta principal en `us-east-1`
-- `cloudbridge-dba-secondary`: Cuenta secundaria en `us-east-2`
+- `cloudbridge-dba-primary`: Cuenta principal en `us-east-1`.
+- `cloudbridge-dba-secondary`: Cuenta secundaria en `us-east-2`.
 - `cloudbridge-dba-primary-2`: Cuenta principal en `us-east-2`.
 
-Podemos acceder a cada uno de estos perfiles utilizando la opción `--profile` de la CLI de `aws`. Un paso adicional que podemos dar es crear un alias para cada uno de estos pefiles y de esa manera evitar tener que tipear el nombre del perfil cada vez que queremos ejecutar un comando:
+Se puede acceder a cada uno de estos perfiles utilizando la opción `--profile` de la CLI de AWS. Un paso adicional es crear un alias para cada perfil para evitar tener que escribir el nombre del perfil cada vez que queramos ejecutar un comando:
 
 ```bash
 alias primary="aws --profile cloudbridge-dba-primary"
@@ -42,9 +42,9 @@ alias secondary="aws --profile cloudbridge-dba-secondary"
 alias primary2="aws --profile cloudbridge-dba-primary-2"
 ```
 
-> Recordar que para poder refrescar los tokens de acceso podemos correr el siguiente comando: `aws sso login --profile $PROFILE_NAME`
+> Recordar que para refrescar los tokens de acceso se puede ejecutar el comando: `aws sso login --profile $PROFILE_NAME`
 
-Podemos utilizar estos `alias` igual que si fuera la cli de `aws`:
+Estos `alias` se pueden utilizar igual que la CLI de AWS:
 
 ```bash
 primary sts get-caller-identity
@@ -55,24 +55,24 @@ primary sts get-caller-identity
 }
 ```
 
-Otro elemento que necesitaremos para acceder a la base de datos es una pequeña base de datos que oficie como bastión, dado que las bases de RDS no podrán ser accedidas desde Internet. Para poder acceder vamos a tener que crear una nueva llave SSH.
+Para acceder a la base de datos, necesitaremos una instancia que funcione como bastión, ya que las bases de RDS no pueden ser accedidas desde Internet. Para ello, crearemos una nueva clave SSH.
 
 ```bash
 ssh-keygen -t rsa -b 4096 -C "$EMAIL" -f "$SSH_KEY_PATH"
 primary ec2 import-key-pair --key-name "$SSH_KEY_NAME" --public-key-material "fileb://$SSH_KEY_PATH.pub"
 ```
 
-> Suponemos que las variables `EMAIL`, `SSH_KEY_PATH`, etc. están cargadas en nuestra sesión actual.
+> Se asume que las variables `EMAIL`, `SSH_KEY_PATH`, etc., están definidas en la sesión actual.
 
-Podemos usar el siguiente comando para verificar que la llave se ha creado correctamente.
+Para verificar que la clave se ha creado correctamente:
 
 ```bash
 primary ec2 describe-key-pairs --query 'KeyPairs[*].[KeyName]' --output text
 ```
 
-Utilizaremos `CloudFormation` para el despliegue de los recursos. [Este template](./cold-start.yaml) lo vamos a tener que llamar con una serie de parámetros como la `subnet` donde se creara la base de datos, y la llave que necesitaremos para el servidor bastión que tendrá accesso a la base de datos.
+Usaremos `CloudFormation` para el despliegue de los recursos. [Este template](./cold-start.yaml) se invocará con una serie de parámetros como la `subnet` donde se creará la base de datos y la clave para el servidor bastión que tendrá acceso a la base de datos.
 
-Para poder ver una lista de las subredes disponibles:
+Para listar las subredes disponibles:
 
 ```bash
 primary ec2 describe-subnets \
@@ -80,7 +80,7 @@ primary ec2 describe-subnets \
   | column -t -s,
 ```
 
-Para obtener la última versión de la imágen de Amazon Linux 2 para utilizar en nuestro servidor bastión en nuestra región podemos usar el siguiente comando:
+Para obtener la última versión de la imagen de Amazon Linux 2 para nuestro servidor bastión en nuestra región:
 
 ```bash
 aws ec2 describe-images \
@@ -91,7 +91,7 @@ aws ec2 describe-images \
     --output text
 ```
 
-Las variables de CloudFormation a utilizar tienen que ser almacenadas en un documento JSON con el siguiente formato:
+Las variables de CloudFormation se almacenarán en un documento JSON con el siguiente formato:
 
 ```json
 [
@@ -130,7 +130,7 @@ Las variables de CloudFormation a utilizar tienen que ser almacenadas en un docu
 ]
 ```
 
-Es conveniente generar un archivo de estos para cada ambiente a soportar.
+Es recomendable generar un archivo de estos para cada entorno a soportar.
 
 Podemos desplegar el `stack` utilizando el script dentro de `scripts/cli.sh`.
 
@@ -138,52 +138,52 @@ Podemos desplegar el `stack` utilizando el script dentro de `scripts/cli.sh`.
 ./scripts/cli.sh cold-start create
 ```
 
-> Utilizando el comando `--help` podemos encontrar más opciones sobre como utilizar este script.
+> El comando `--help` ofrece más opciones sobre cómo utilizar este script.
 
-El proceso de creación de base de datos dura varios minutos. Una vez finalizado, podemos levantar los recursos encargados de raccionar ante eventos generados por RDS.
+El proceso de creación de la base de datos toma varios minutos. Una vez finalizado, podemos implementar los recursos que reaccionarán ante eventos generados por RDS.
 
-Ahora podemos crear los recursos relacionados a la gestión de eventos.
+Ahora podemos crear los recursos relacionados con la gestión de eventos.
 
 ```bash
 ./scripts/cli.sh events create
 ```
 
-> Actualmente el template `events` engloba la creación de la llave privada KMS Multi-región y el rol qur utilizará la función Lambda. Sería mejor mover todos estos a un CloudFormation especifico.
+> Actualmente, el template `events` incluye la creación de la clave privada KMS Multi-región y el rol que utilizará la función Lambda. Sería mejor trasladar todo esto a un CloudFormation específico.
 
-Por último, necesitamos crear los recursos en la cuenta de contingencia. Este template require de parámetros adicionales que tenemos que obtener del resultado del despliegue del template `events`. Para simplificar la obtención de estos valore se expone el siguiente comando:
+Finalmente, necesitamos crear los recursos en la cuenta de contingencia. Este template requiere parámetros adicionales que debemos obtener del resultado del despliegue del template `events`. Para facilitar la obtención de estos valores, se proporciona el siguiente comando:
 
 ```bash
 ./scripts/cli.sh events status
 ```
 
-Dentro de la llave `Outputs` podremos encontrar los valores de:
+Dentro de la clave `Outputs`, encontraremos los valores de:
 
-- `LambdaFunctionArn`: ARN de la función lambda que copiara los snaphots.
-- `PrincipalKmsKeyArn`: ARN de la llave KMS principal.
+- `LambdaFunctionArn`: ARN de la función Lambda que copiará los snapshots.
+- `PrincipalKmsKeyArn`: ARN de la clave KMS principal.
 
-Estos valores se los tenemos que pasar al template `cross-region`.
+Estos valores se deben pasar al template `cross-region`.
 
-> Para simplificar el despliegue del mismo, el comando `create` de `cross-region` busca estos valores automaticamente si no se proveen como opciones adicionales.
+> Para facilitar el despliegue, el comando `create` de `cross-region` busca estos valores automáticamente si no se proporcionan como opciones adicionales.
 
 ```bash
 ./scripts/cli.sh cross-region create
 ```
 
-> Este segundo template se desplegará en la cuenta principal pero en la región de contingencia. En la demo estamos utilizando `us-east-2`.
+> Este segundo template se desplegará en la cuenta principal pero en la región de contingencia. En la demo, estamos utilizando `us-east-2`.
 
-Una vez que todos los templates son desplegados podemos forcar la creación de un `snapshot` de la base de datos para ver si se efectura la copia.
+Una vez desplegados todos los templates, podemos forzar la creación de un `snapshot` de la base de datos para comprobar si se realiza la copia.
 
 ```bash
 demo snapshots create
 ```
 
-Este comando espera que termine el proceso de snapshot. Una vez finalizado, el evento correspondiente se ejecuta que termina llamando a nuestra función y ejectuta la copia. Podemos verificar su funcionamiento verificando los logs de la función.
+Este comando espera a que finalice el proceso de snapshot. Una vez completado, se ejecuta el evento correspondiente que termina llamando a nuestra función y ejecuta la copia. Podemos verificar su funcionamiento revisando los logs de la función.
 
 ```bash
 demo events logs
 ```
 
-Una salida exitosa debería verse similar a la siguiente:
+Una salida exitosa debería verse de la siguiente manera:
 
 ```txt
 INIT_START Runtime Version: python:3.8.v33      Runtime Version ARN: arn:aws:lambda:us-east-1::runtime:353a31d9fb2c7cac8474d278a6cf08824c7f87f698d61d1df2c128fc25a48d43
@@ -196,7 +196,7 @@ Snapshot ARN: arn:aws:rds:us-east-1:751594288501:snapshot:cross-region-cross-acc
 
 Snapshot Name: cross-region-cross-account-rds-backups-dev-snapshot-1700446618
 
-Copia de snapshot finalizada con exito
+Copia de snapshot finalizada con éxito
 
 END RequestId: fc6c9419-4d8c-4a5a-bd8e-4226ddc894d5
 
@@ -205,10 +205,10 @@ REPORT RequestId: fc6c9419-4d8c-4a5a-bd8e-4226ddc894d5  Duration: 2804.43 ms    
 
 ## Conclusiones
 
-El proceso de copia de snapshots entre regiones de forma automática es posible. Lo único que es necesario es:
+El proceso de copia automática de snapshots entre regiones es factible. Solo es necesario:
 
-1. Veríficar el formato del evento de creación de `snapshot` de RDS para que la función se ejecute correctamente.
-2. Crear la llave de KMS en la región principal y crear un copia en la región secundaria. Esto se traduce a una llave KMS multi-región con una `KeyReplica` en la región secundaria.
-3. Darle permisos suficientes a la función Lambda para que puede hacer uso de la llave KMS.
+1. Verificar el formato del evento de creación de `snapshot` de RDS para que la función se ejecute correctamente.
+2. Crear la clave de KMS en la región principal y crear una copia en la región secundaria. Esto se traduce en una clave KMS multi-región con una `KeyReplica` en la región secundaria.
+3. Otorgar permisos suficientes a la función Lambda para que pueda hacer uso de la clave KMS.
 
-Este proceso se puede utilizar para reaccionar ante snapshots manuales o automáticos.
+Este proceso puede aplicarse tanto a snapshots manuales como automáticos.
