@@ -67,25 +67,28 @@ inspect_args() {
 
 set -eo pipefail
 ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-DEMO_NAME="${DEMO_NAME:-"cross-region-cross-account-rds-backups"}"
+DEMO_NAME="${DEMO_NAME:-"cross-region-cross-account-rds-backups-events"}"
 primary="aws --profile cloudbridge-dba-primary"
 
 version() {
   echo "0.1.0"
 }
 usage() {
-  printf "Handle the cold-start resources\n"
+  printf "Handle the events resources\n"
   printf "\n\033[4m%s\033[0m\n" "Usage:"
-  printf "  cold-start [OPTIONS] [COMMAND] [COMMAND_OPTIONS]\n"
-  printf "  cold-start -h|--help\n"
-  printf "  cold-start -v|--version\n"
+  printf "  events [OPTIONS] [COMMAND] [COMMAND_OPTIONS]\n"
+  printf "  events -h|--help\n"
+  printf "  events -v|--version\n"
   printf "\n\033[4m%s\033[0m\n" "Commands:"
   cat <<EOF
-  create ..... Deploy the cold-start resources using CloudFormation
-  destroy .... Destroys the cold-start resources using CloudFormation
-  status ..... Get the status of the deployed cold-start resources
-  track ...... Track the update of a CloudFormation template
-  update ..... Update the cold-start resources using CloudFormation
+  create ......... Deploy the events resources using CloudFormation
+  destroy ........ Destroys the events resources using CloudFormation
+  log-groups ..... Get the list of log groups
+  log-streams .... Get the log-streams of one of the events lamda function
+  logs ........... Get the logs of one of the events lamda function
+  status ......... Get the status of the deployed events resources
+  track .......... Track the update of a CloudFormation template
+  update ......... Update the events resources using CloudFormation
 EOF
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
@@ -122,6 +125,18 @@ parse_arguments() {
       action="destroy"
       input=("${input[@]:1}")
       ;;
+    log-groups)
+      action="log-groups"
+      input=("${input[@]:1}")
+      ;;
+    log-streams)
+      action="log-streams"
+      input=("${input[@]:1}")
+      ;;
+    logs)
+      action="logs"
+      input=("${input[@]:1}")
+      ;;
     status)
       action="status"
       input=("${input[@]:1}")
@@ -147,7 +162,7 @@ parse_arguments() {
   esac
 }
 create_usage() {
-  printf "Deploy the cold-start resources using CloudFormation\n"
+  printf "Deploy the events resources using CloudFormation\n"
 
   printf "\n\033[4m%s\033[0m\n" "Usage:"
   printf "  create [OPTIONS]\n"
@@ -218,7 +233,7 @@ parse_create_arguments() {
     esac
   done
 }
-# Deploy the cold-start resources using CloudFormation
+# Deploy the events resources using CloudFormation
 create() {
   local rargs_no_track
   local rargs_environment
@@ -238,10 +253,10 @@ create() {
 		rargs_stack_name="$DEMO_NAME-$rargs_environment"
 	fi
 	if [[ -z "$rargs_template" ]]; then
-		rargs_template="$ROOT_DIRECTORY/../cold-start-cf-template.yaml"
+		rargs_template="$ROOT_DIRECTORY/../events-cf-template.yaml"
 	fi
 	if [[ -z "$rargs_parameters" ]]; then
-		rargs_parameters="$ROOT_DIRECTORY/../cold-start-parameters.$rargs_environment.json"
+		rargs_parameters="$ROOT_DIRECTORY/../events-parameters.$rargs_environment.json"
 	fi
 	echo "Attempting to create stack $rargs_stack_name" >&2
 	if ! $primary cloudformation create-stack \
@@ -262,7 +277,7 @@ create() {
 	exit $?
 }
 destroy_usage() {
-  printf "Destroys the cold-start resources using CloudFormation\n"
+  printf "Destroys the events resources using CloudFormation\n"
 
   printf "\n\033[4m%s\033[0m\n" "Usage:"
   printf "  destroy [OPTIONS]\n"
@@ -274,8 +289,6 @@ destroy_usage() {
   printf "    [@default dev]\n"
   printf "  -s --stack-name [<STACK-NAME>]\n"
   printf "    The name of the stack to use.\n"
-  printf "  --no-track\n"
-  printf "    Don't track update changes.\n"
   printf "  -h --help\n"
   printf "    Print help\n"
 }
@@ -295,10 +308,6 @@ parse_destroy_arguments() {
   while [[ $# -gt 0 ]]; do
     key="$1"
     case "$key" in
-      --no-track)
-        rargs_no_track=1
-        shift
-        ;;
       -e | --environment)
         rargs_environment="$2"
         shift 2
@@ -321,9 +330,8 @@ parse_destroy_arguments() {
     esac
   done
 }
-# Destroys the cold-start resources using CloudFormation
+# Destroys the events resources using CloudFormation
 destroy() {
-  local rargs_no_track
   local rargs_environment
   local rargs_stack_name
   # Parse command arguments
@@ -344,8 +352,240 @@ destroy() {
 		track -s "$rargs_stack_name"
 	fi
 }
+log-groups_usage() {
+  printf "Get the list of log groups\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  log-groups [OPTIONS]\n"
+  printf "  log-groups -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to get the logs from.\n"
+  printf "    [@default [=SnapshotLambdaFunction]]\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_log-groups_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        log-groups_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -l | --lambda)
+        rargs_lambda="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Get the list of log groups
+log-groups() {
+  local rargs_lambda
+  # Parse command arguments
+  parse_log-groups_arguments "$@"
+
+  
+    
+  if [[ -z "$rargs_lambda" ]]; then
+    rargs_lambda="[=SnapshotLambdaFunction]"
+  fi
+    
+	$primary logs describe-log-groups \
+		--query 'logGroups[].{logGroupName: logGroupName, creationTime: creationTime}' |
+		yq '.[] | .logGroupName + "|" + .creationTime ' |
+		sort -r |
+		grep "$rargs_lambda" |
+		column -t -s'|' |
+		sort -k2,2nr
+}
+log-streams_usage() {
+  printf "Get the log-streams of one of the events lamda function\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  log-streams [OPTIONS]\n"
+  printf "  log-streams -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -g --group [<GROUP>]\n"
+  printf "    The name of the log group to use.\n"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to get the logs from.\n"
+  printf "    [@default [=SnapshotLambdaFunction]]\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_log-streams_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        log-streams_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -g | --group)
+        rargs_group="$2"
+        shift 2
+        ;;
+      -l | --lambda)
+        rargs_lambda="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Get the log-streams of one of the events lamda function
+log-streams() {
+  local rargs_group
+  local rargs_lambda
+  # Parse command arguments
+  parse_log-streams_arguments "$@"
+
+  
+    
+  if [[ -z "$rargs_lambda" ]]; then
+    rargs_lambda="[=SnapshotLambdaFunction]"
+  fi
+    
+	if [[ -z "$rargs_group" ]]; then
+		rargs_group="$(log-groups | grep "$rargs_lambda" | head -n 1 | cut -d' ' -f1)"
+	fi
+	$primary logs describe-log-streams \
+		--log-group-name "$rargs_group" \
+		--order-by LastEventTime \
+		--descending \
+		--query 'logStreams[].{logStreamName: logStreamName, creationTime: creationTime}' |
+		yq '.[] | .logStreamName + "|" + .creationTime ' |
+		column -t -s'|' |
+		sort -k2,2nr
+}
+logs_usage() {
+  printf "Get the logs of one of the events lamda function\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  logs [OPTIONS]\n"
+  printf "  logs -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -g --group [<GROUP>]\n"
+  printf "    The name of the log group to use.\n"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to get the logs from.\n"
+  printf "    [@default [=SnapshotLambdaFunction]]\n"
+  printf "  -s --stream [<STREAM>]\n"
+  printf "    The name of the log stream to use.\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_logs_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        logs_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -g | --group)
+        rargs_group="$2"
+        shift 2
+        ;;
+      -l | --lambda)
+        rargs_lambda="$2"
+        shift 2
+        ;;
+      -s | --stream)
+        rargs_stream="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Get the logs of one of the events lamda function
+logs() {
+  local rargs_group
+  local rargs_lambda
+  local rargs_stream
+  # Parse command arguments
+  parse_logs_arguments "$@"
+
+  
+    
+  if [[ -z "$rargs_lambda" ]]; then
+    rargs_lambda="[=SnapshotLambdaFunction]"
+  fi
+    
+	if [[ -z "$rargs_group" ]]; then
+		rargs_group="$(log-groups -l "$rargs_lambda" | head -n 1 | cut -d' ' -f1)"
+	fi
+	if [[ -z "$rargs_stream" ]]; then
+		rargs_stream="$(log-streams -g "$rargs_group" | head -n 1 | cut -d' ' -f1)"
+	fi
+	$primary logs get-log-events \
+		--log-group-name "$rargs_group" \
+		--log-stream-name "$rargs_stream" |
+		jq -r '.events[].message'
+}
 status_usage() {
-  printf "Get the status of the deployed cold-start resources\n"
+  printf "Get the status of the deployed events resources\n"
 
   printf "\n\033[4m%s\033[0m\n" "Usage:"
   printf "  status [OPTIONS]\n"
@@ -398,7 +638,7 @@ parse_status_arguments() {
     esac
   done
 }
-# Get the status of the deployed cold-start resources
+# Get the status of the deployed events resources
 status() {
   local rargs_environment
   local rargs_stack_name
@@ -564,7 +804,7 @@ track() {
 	return $EXIT_STATUS
 }
 update_usage() {
-  printf "Update the cold-start resources using CloudFormation\n"
+  printf "Update the events resources using CloudFormation\n"
 
   printf "\n\033[4m%s\033[0m\n" "Usage:"
   printf "  update [OPTIONS]\n"
@@ -635,7 +875,7 @@ parse_update_arguments() {
     esac
   done
 }
-# Update the cold-start resources using CloudFormation
+# Update the events resources using CloudFormation
 update() {
   local rargs_no_track
   local rargs_environment
@@ -655,10 +895,10 @@ update() {
 		rargs_stack_name="$DEMO_NAME-$rargs_environment"
 	fi
 	if [[ -z "$rargs_template" ]]; then
-		rargs_template="$ROOT_DIRECTORY/../cold-start-cf-template.yaml"
+		rargs_template="$ROOT_DIRECTORY/../events-cf-template.yaml"
 	fi
 	if [[ -z "$rargs_parameters" ]]; then
-		rargs_parameters="$ROOT_DIRECTORY/../cold-start-parameters.$rargs_environment.json"
+		rargs_parameters="$ROOT_DIRECTORY/../events-parameters.$rargs_environment.json"
 	fi
 	change_set_name="$rargs_stack_name-change-set-$(date +%s)"
 	echo "Creating change set $change_set_name" >&2
@@ -681,6 +921,7 @@ update() {
 		--stack-name "$rargs_stack_name" \
 		--change-set-name "$change_set_name"
 	if [[ -z "$rargs_no_track" ]]; then
+		echo "Tracking changes" >&2
 		track -s "$rargs_stack_name"
 	fi
 	exit $?
@@ -701,6 +942,18 @@ run() {
       destroy "${input[@]}"
       exit
       ;;
+    "log-groups")
+      log-groups "${input[@]}"
+      exit
+      ;;
+    "log-streams")
+      log-streams "${input[@]}"
+      exit
+      ;;
+    "logs")
+      logs "${input[@]}"
+      exit
+      ;;
     "status")
       status "${input[@]}"
       exit
@@ -714,7 +967,7 @@ run() {
       exit
       ;;
     "")
-      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "create, destroy, status, track, update" >&2
+      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "create, destroy, log-groups, log-streams, logs, status, track, update" >&2
       usage >&2
       exit 1
       ;;

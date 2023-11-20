@@ -65,6 +65,9 @@ inspect_args() {
   fi
 }
 
+ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+self="$ROOT_DIRECTORY/cli.sh"
+
 version() {
   echo "0.1.0"
 }
@@ -76,8 +79,13 @@ usage() {
   printf "  cross-region-cross-account-rds-backups -v|--version\n"
   printf "\n\033[4m%s\033[0m\n" "Commands:"
   cat <<EOF
-  cold-start .... Handle cold-start resources
-  snapshots ..... Handle snapshots
+  cold-start ...... Handle cold-start resources
+  cross-region .... Handle cross-region resources
+  down ............ Destroy all the DEMO resources
+  events .......... Handle events and events resources
+  snapshots ....... Handle snapshots
+  up .............. Create all the DEMO resources
+  update .......... Update the DEMO resources
 EOF
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
@@ -110,8 +118,28 @@ parse_arguments() {
       action="cold-start"
       input=("${input[@]:1}")
       ;;
+    cross-region)
+      action="cross-region"
+      input=("${input[@]:1}")
+      ;;
+    down)
+      action="down"
+      input=("${input[@]:1}")
+      ;;
+    events)
+      action="events"
+      input=("${input[@]:1}")
+      ;;
     snapshots)
       action="snapshots"
+      input=("${input[@]:1}")
+      ;;
+    up)
+      action="up"
+      input=("${input[@]:1}")
+      ;;
+    update)
+      action="update"
       input=("${input[@]:1}")
       ;;
     -h|--help)
@@ -158,6 +186,133 @@ cold-start() {
 	# shellcheck disable=SC2154
 	"$sub" ${input[@]}
 }
+cross-region_usage() {
+  printf "Handle cross-region resources\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  cross-region [OPTIONS]\n"
+  printf "  cross-region -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_cross-region_arguments() {
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      *)
+        break
+        ;;
+    esac
+  done
+}
+# Handle cross-region resources
+cross-region() {
+  # Parse command arguments
+  parse_cross-region_arguments "$@"
+
+  local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./cross-region.sh"
+	# shellcheck disable=SC2068
+	# shellcheck disable=SC2154
+	"$sub" ${input[@]}
+}
+down_usage() {
+  printf "Destroy all the DEMO resources\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  down [OPTIONS]\n"
+  printf "  down -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_down_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        down_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      --)
+        shift
+        other_args+=("$@")
+        break
+        ;;
+      -?*)
+        other_args+=("$1")
+        shift
+        ;;
+      *)
+        other_args+=("$1")
+        shift
+        ;;
+    esac
+  done
+}
+# Destroy all the DEMO resources
+down() {
+  # Parse command arguments
+  parse_down_arguments "$@"
+
+  # Check dependencies
+  dependency="parallel"
+  if ! command -v $dependency >/dev/null 2>&1; then
+    printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing dependency: " "$dependency" >&2
+    printf "You need to install GNU Parallel to use this command.\n" >&2
+    exit 1
+  else
+    deps["$dependency"]="$(command -v $dependency | head -n1)"
+  fi
+
+	set +e
+	$self cross-region destroy
+	$self events destroy
+	$self cold-start destroy
+}
+events_usage() {
+  printf "Handle events and events resources\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  events [OPTIONS]\n"
+  printf "  events -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_events_arguments() {
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      *)
+        break
+        ;;
+    esac
+  done
+}
+# Handle events and events resources
+events() {
+  # Parse command arguments
+  parse_events_arguments "$@"
+
+  local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./events.sh"
+	# shellcheck disable=SC2068
+	# shellcheck disable=SC2154
+	"$sub" ${input[@]}
+}
 snapshots_usage() {
   printf "Handle snapshots\n"
 
@@ -190,24 +345,186 @@ snapshots() {
 	# shellcheck disable=SC2154
 	"$sub" ${input[@]}
 }
+up_usage() {
+  printf "Create all the DEMO resources\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  up [OPTIONS]\n"
+  printf "  up -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_up_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        up_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      --)
+        shift
+        other_args+=("$@")
+        break
+        ;;
+      -?*)
+        other_args+=("$1")
+        shift
+        ;;
+      *)
+        other_args+=("$1")
+        shift
+        ;;
+    esac
+  done
+}
+# Create all the DEMO resources
+up() {
+  # Parse command arguments
+  parse_up_arguments "$@"
+
+  # Check dependencies
+  dependency="parallel"
+  if ! command -v $dependency >/dev/null 2>&1; then
+    printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing dependency: " "$dependency" >&2
+    printf "You need to install GNU Parallel to use this command.\n" >&2
+    exit 1
+  else
+    deps["$dependency"]="$(command -v $dependency | head -n1)"
+  fi
+
+	set -x
+	$self cold-start create
+	$self events create
+	primary_kms_key_arn="$($self events status | yq -r '.Outputs[] | select(.OutputKey == "PrincipalKmsKeyArn").OutputValue')"
+	lambda_function_arn="$($self events status | yq -r '.Outputs[] | select(.OutputKey == "LambdaFunctionArn").OutputValue')"
+	$self cross-region create --primary-kms-key-arn "$primary_kms_key_arn" --lambda-function-arn "$lambda_function_arn"
+}
+update_usage() {
+  printf "Update the DEMO resources\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  update [OPTIONS]\n"
+  printf "  update -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_update_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        update_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      --)
+        shift
+        other_args+=("$@")
+        break
+        ;;
+      -?*)
+        other_args+=("$1")
+        shift
+        ;;
+      *)
+        other_args+=("$1")
+        shift
+        ;;
+    esac
+  done
+}
+# Update the DEMO resources
+update() {
+  # Parse command arguments
+  parse_update_arguments "$@"
+
+  # Check dependencies
+  dependency="parallel"
+  if ! command -v $dependency >/dev/null 2>&1; then
+    printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing dependency: " "$dependency" >&2
+    printf "You need to install GNU Parallel to use this command.\n" >&2
+    exit 1
+  else
+    deps["$dependency"]="$(command -v $dependency | head -n1)"
+  fi
+
+	set -x
+	$self cold-start update
+	$self events update
+	primary_kms_key_arn="$($self cold-start status | yq -r '.Outputs[] | select(.OutputKey == "PrincipalKmsKeyArn").OutputValue')"
+	lambda_function_arn="$($self events status | yq -r '.Outputs[] | select(.OutputKey == "LambdaFunctionArn").OutputValue')"
+	$self cross-region update --primary-kms-key-arn "$primary_kms_key_arn" --lambda-function-arn "$lambda_function_arn"
+}
 
 run() {
   declare -A deps=()
+  declare -a other_args=()
   declare -a input=()
   normalize_input "$@"
   parse_arguments "${input[@]}"
+  # Check global dependencies
+  
+  for dependency in jq aws yq column; do
+    if ! command -v $dependency >/dev/null 2>&1; then
+      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing dependency: " "$dependency" >&2
+      exit 1
+    else
+      deps["$dependency"]="$(command -v $dependency | head -n1)"
+    fi
+  done
+
   # Call the right command action
   case "$action" in
     "cold-start")
       cold-start "${input[@]}"
       exit
       ;;
+    "cross-region")
+      cross-region "${input[@]}"
+      exit
+      ;;
+    "down")
+      down "${input[@]}"
+      exit
+      ;;
+    "events")
+      events "${input[@]}"
+      exit
+      ;;
     "snapshots")
       snapshots "${input[@]}"
       exit
       ;;
+    "up")
+      up "${input[@]}"
+      exit
+      ;;
+    "update")
+      update "${input[@]}"
+      exit
+      ;;
     "")
-      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "cold-start, snapshots" >&2
+      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "cold-start, cross-region, down, events, snapshots, up, update" >&2
       usage >&2
       exit 1
       ;;

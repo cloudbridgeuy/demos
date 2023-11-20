@@ -35,7 +35,7 @@ Resources:
     Type: "AWS::RDS::DBInstance"
     Properties:
       DBInstanceClass: db.t4g.small
-      AllocatedStorage: 20
+      AllocatedStorage: 5
       DBName: !Ref DBName
       Engine: postgres
       MasterUsername: !Ref DBUser
@@ -87,41 +87,10 @@ Resources:
       SecurityGroupIds:
         - !Ref BastionSecurityGroup
 
-  PrincipalKmsKey:
-    Type: "AWS::KMS::Key"
-    Properties:
-      Description: "Llave KMS para copiar los snapshots creados por RDS."
-      KeyPolicy:
-        Version: "2012-10-17"
-        Id: "Id-Kms-1"
-        Statement:
-          - Sid: "Asignacion de perimisos"
-            Effect: "Allow"
-            Principal:
-              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
-            Action: "kms:*"
-            Resource: "*"
-          - Sid: "Permitir el uso con RDS"
-            Effect: "Allow"
-            Principal:
-              Service: "rds.amazonaws.com"
-            Action:
-              - "kms:Encrypt"
-              - "kms:Decrypt"
-              - "kms:ReEncrypt*"
-              - "kms:GenerateDataKey*"
-              - "kms:DescribeKey"
-            Resource: "*"
-
 Outputs:
   DBInstanceEndpoint:
     Description: The database endpoint
     Value: !GetAtt DB.Endpoint.Address
-
   BastionHostPublicIP:
     Description: The public IP address of the bastion host
     Value: !GetAtt BastionHost.PublicIp
-
-  PrincipalKmsKeyArn:
-    Description: "The ARN of the KMS Key for RDS snapshots"
-    Value: !GetAtt PrincipalKmsKey.Arn

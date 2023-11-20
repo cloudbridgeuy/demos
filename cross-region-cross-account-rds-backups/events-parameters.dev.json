@@ -1,0 +1,10 @@
+[
+  {
+    "ParameterKey": "AwsRegion",
+    "ParameterValue": "us-east-1"
+  },
+  {
+    "ParameterKey": "DestinationAwsRegion",
+    "ParameterValue": "us-east-2"
+  }
+]

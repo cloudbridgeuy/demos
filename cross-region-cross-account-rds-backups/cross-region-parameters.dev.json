@@ -1,0 +1,1 @@
+[{"ParameterKey":"PrincipalKmsKeyArn","ParameterValue":"arn:aws:kms:us-east-1:751594288501:key/mrk-541b57426bad488fa94e7db3c522eda1"},{"ParameterKey":"LambdaExecutionRoleArn","ParameterValue":"arn:aws:iam::751594288501:role/cross-region-cross-account-rds--LambdaExecutionRole-KLgoi7WnAm7r"}]

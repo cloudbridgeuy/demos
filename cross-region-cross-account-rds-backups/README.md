@@ -131,3 +131,84 @@ Las variables de CloudFormation a utilizar tienen que ser almacenadas en un docu
 ```
 
 Es conveniente generar un archivo de estos para cada ambiente a soportar.
+
+Podemos desplegar el `stack` utilizando el script dentro de `scripts/cli.sh`.
+
+```bash
+./scripts/cli.sh cold-start create
+```
+
+> Utilizando el comando `--help` podemos encontrar más opciones sobre como utilizar este script.
+
+El proceso de creación de base de datos dura varios minutos. Una vez finalizado, podemos levantar los recursos encargados de raccionar ante eventos generados por RDS.
+
+Ahora podemos crear los recursos relacionados a la gestión de eventos.
+
+```bash
+./scripts/cli.sh events create
+```
+
+> Actualmente el template `events` engloba la creación de la llave privada KMS Multi-región y el rol qur utilizará la función Lambda. Sería mejor mover todos estos a un CloudFormation especifico.
+
+Por último, necesitamos crear los recursos en la cuenta de contingencia. Este template require de parámetros adicionales que tenemos que obtener del resultado del despliegue del template `events`. Para simplificar la obtención de estos valore se expone el siguiente comando:
+
+```bash
+./scripts/cli.sh events status
+```
+
+Dentro de la llave `Outputs` podremos encontrar los valores de:
+
+- `LambdaFunctionArn`: ARN de la función lambda que copiara los snaphots.
+- `PrincipalKmsKeyArn`: ARN de la llave KMS principal.
+
+Estos valores se los tenemos que pasar al template `cross-region`.
+
+> Para simplificar el despliegue del mismo, el comando `create` de `cross-region` busca estos valores automaticamente si no se proveen como opciones adicionales.
+
+```bash
+./scripts/cli.sh cross-region create
+```
+
+> Este segundo template se desplegará en la cuenta principal pero en la región de contingencia. En la demo estamos utilizando `us-east-2`.
+
+Una vez que todos los templates son desplegados podemos forcar la creación de un `snapshot` de la base de datos para ver si se efectura la copia.
+
+```bash
+demo snapshots create
+```
+
+Este comando espera que termine el proceso de snapshot. Una vez finalizado, el evento correspondiente se ejecuta que termina llamando a nuestra función y ejectuta la copia. Podemos verificar su funcionamiento verificando los logs de la función.
+
+```bash
+demo events logs
+```
+
+Una salida exitosa debería verse similar a la siguiente:
+
+```txt
+INIT_START Runtime Version: python:3.8.v33      Runtime Version ARN: arn:aws:lambda:us-east-1::runtime:353a31d9fb2c7cac8474d278a6cf08824c7f87f698d61d1df2c128fc25a48d43
+
+START RequestId: fc6c9419-4d8c-4a5a-bd8e-4226ddc894d5 Version: $LATEST
+
+Procesando nuevo evento
+
+Snapshot ARN: arn:aws:rds:us-east-1:751594288501:snapshot:cross-region-cross-account-rds-backups-dev-snapshot-1700446618
+
+Snapshot Name: cross-region-cross-account-rds-backups-dev-snapshot-1700446618
+
+Copia de snapshot finalizada con exito
+
+END RequestId: fc6c9419-4d8c-4a5a-bd8e-4226ddc894d5
+
+REPORT RequestId: fc6c9419-4d8c-4a5a-bd8e-4226ddc894d5  Duration: 2804.43 ms    Billed Duration: 2805 ms        Memory Size: 128 MB     Max Memory Used: 70 MB  Init Duration: 262.28 ms
+```
+
+## Conclusiones
+
+El proceso de copia de snapshots entre regiones de forma automática es posible. Lo único que es necesario es:
+
+1. Veríficar el formato del evento de creación de `snapshot` de RDS para que la función se ejecute correctamente.
+2. Crear la llave de KMS en la región principal y crear un copia en la región secundaria. Esto se traduce a una llave KMS multi-región con una `KeyReplica` en la región secundaria.
+3. Darle permisos suficientes a la función Lambda para que puede hacer uso de la llave KMS.
+
+Este proceso se puede utilizar para reaccionar ante snapshots manuales o automáticos.

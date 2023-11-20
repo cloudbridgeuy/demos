@@ -1,0 +1,60 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Este Template de CloudFormation contiene los recursos iniciales necesarios para la prueba de concepto."
+
+Parameters:
+  PrincipalKmsKeyArn:
+    Description: Llave KMS Multi-Region creada en la cuenta principal compartida con la region de contingencia
+    Type: String
+  LambdaExecutionRoleArn:
+    Description: ARN del rol utilizado por Lambda para copiar los snapshots entre regiones.
+    Type: String
+Resources:
+  PrincipalKmsKeyReplica:
+    Type: "AWS::KMS::ReplicaKey"
+    Properties:
+      PrimaryKeyArn: !Ref PrincipalKmsKeyArn
+      Description: "Replica de PrincipalKmsKey en region de contingencia"
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: "Id-Kms-Replica-1"
+        Statement:
+          - Sid: "Enable IAM User Permissions"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: "Permitir el uso con RDS"
+            Effect: "Allow"
+            Principal:
+              Service: "rds.amazonaws.com"
+            Action:
+              - "kms:CreateGrant"
+              - "kms:ListGrant"
+              - "kms:RevokeGrant"
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+          - Sid: "Permitir a la funcion lambda del uso de la llave"
+            Effect: "Allow"
+            Principal:
+              AWS: !Ref LambdaExecutionRoleArn
+            Action:
+              - "kms:CreateGrant"
+              - "kms:ListGrant"
+              - "kms:RevokeGrant"
+              - "kms:DescribeKey"
+              - "kms:Encrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+            Condition: { "Bool": { "kms:GrantIsForAWSResource": true } }
+Outputs:
+  PrincipalKmsKeyReplicaArn:
+    Value: !GetAtt PrincipalKmsKeyReplica.Arn
+    Description: "The ARN of the KMS Key Replica for RDS snapshots in us- east-2"

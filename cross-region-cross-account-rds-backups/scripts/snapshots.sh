@@ -68,6 +68,7 @@ inspect_args() {
 set -eo pipefail
 DEMO_NAME="${DEMO_NAME:-"cross-region-cross-account-rds-backups"}"
 primary="aws --profile cloudbridge-dba-primary"
+primary2="aws --profile cloudbridge-dba-primary-2"
 
 version() {
   echo "0.1.0"
@@ -80,8 +81,12 @@ usage() {
   printf "  snapshots -v|--version\n"
   printf "\n\033[4m%s\033[0m\n" "Commands:"
   cat <<EOF
-  create .... Creates a new snapshot
-  status .... Gets the status of an existing snapshot
+  create ............ Creates a new snapshot
+  delete ............ Deletes a snapshot
+  list-instances .... Shows the list of RDS instances
+  list-snapshots .... List snapshots
+  purge ............. Cleans up all snapshots
+  status ............ Gets the status of an existing snapshot
 EOF
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
@@ -112,6 +117,22 @@ parse_arguments() {
   case $action in
     create)
       action="create"
+      input=("${input[@]:1}")
+      ;;
+    delete)
+      action="delete"
+      input=("${input[@]:1}")
+      ;;
+    list-instances)
+      action="list-instances"
+      input=("${input[@]:1}")
+      ;;
+    list-snapshots)
+      action="list-snapshots"
+      input=("${input[@]:1}")
+      ;;
+    purge)
+      action="purge"
       input=("${input[@]:1}")
       ;;
     status)
@@ -204,6 +225,9 @@ create() {
     rargs_environment="dev"
   fi
     
+	if [[ -z "$rargs_db_instance_identifier" ]]; then
+		rargs_db_instance_identifier="$(list-instances | tail -n+2 | head -n1 | cut -d' ' -f1)"
+	fi
 	if [[ -z "$rargs_db_snapshot_identifier" ]]; then
 		rargs_db_snapshot_identifier="$DEMO_NAME-$rargs_environment-snapshot-$(date +%s)"
 	fi
@@ -211,6 +235,239 @@ create() {
 		--db-snapshot-identifier "$rargs_db_snapshot_identifier" \
 		--db-instance-identifier "$rargs_db_instance_identifier"
 	status -n "$rargs_db_snapshot_identifier" --watch
+}
+delete_usage() {
+  printf "Deletes a snapshot\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  delete [OPTIONS]\n"
+  printf "  delete -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -n --db-snapshot-identifier [<DB-SNAPSHOT-IDENTIFIER>]\n"
+  printf "    A unique snapshot identifier\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_delete_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        delete_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -n | --db-snapshot-identifier)
+        rargs_db_snapshot_identifier="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Deletes a snapshot
+delete() {
+  local rargs_db_snapshot_identifier
+  # Parse command arguments
+  parse_delete_arguments "$@"
+
+	$primary rds delete-db-snapshot \
+		--db-snapshot-identifier "$rargs_db_snapshot_identifier"
+}
+list-instances_usage() {
+  printf "Shows the list of RDS instances\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  list-instances [OPTIONS]\n"
+  printf "  list-instances -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_list-instances_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        list-instances_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Shows the list of RDS instances
+list-instances() {
+  # Parse command arguments
+  parse_list-instances_arguments "$@"
+
+	{
+		echo "DBInstanceIdentifier|DBInstanceStatus"
+		$primary rds describe-db-instances \
+			--query 'DBInstances[*].{DBInstanceIdentifier: DBInstanceIdentifier, DBInstanceStatus: DBInstanceStatus}' |
+			yq -r '.[] | .DBInstanceIdentifier + "|" + .DBInstanceStatus'
+	} |
+		column -t -s'|'
+}
+list-snapshots_usage() {
+  printf "List snapshots\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  list-snapshots [OPTIONS]\n"
+  printf "  list-snapshots -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -n --db-snapshot-identifier [<DB-SNAPSHOT-IDENTIFIER>]\n"
+  printf "    A unique snapshot identifier\n"
+  printf "  --secondary\n"
+  printf "    Use the secondary account\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_list-snapshots_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        list-snapshots_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      --secondary)
+        rargs_secondary=1
+        shift
+        ;;
+      -n | --db-snapshot-identifier)
+        rargs_db_snapshot_identifier="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# List snapshots
+list-snapshots() {
+  local rargs_secondary
+  local rargs_db_snapshot_identifier
+  # Parse command arguments
+  parse_list-snapshots_arguments "$@"
+
+	if [[ -z "$rargs_secondary" ]]; then
+		client="$primary"
+	else
+		client="$primary2"
+	fi
+	{
+		echo "DBSnapshotIdentifier|DBInstanceIdentifier|SnapshotType|SnapshotCreateTime|Engine|AllocatedStorage|Status"
+		$client rds describe-db-snapshots \
+			--db-instance-identifier "$rargs_db_snapshot_identifier" \
+			--query 'DBSnapshots[*].{id: DBSnapshotIdentifier, instance: DBInstanceIdentifier, type: SnapshotType, created: SnapshotCreateTime, engine: Engine, storage: AllocatedStorage, status: Status}' |
+			yq -r '.[] | .id + "|" + .instance + "|" + .type + "|" + .created + "|" + .engine + "|" + .storage + "|" + .status'
+	} |
+		column -t -s'|'
+}
+purge_usage() {
+  printf "Cleans up all snapshots\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  purge [OPTIONS]\n"
+  printf "  purge -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_purge_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        purge_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Cleans up all snapshots
+purge() {
+  # Parse command arguments
+  parse_purge_arguments "$@"
+
+	list-snapshots --secondary | tail -n+2 | grep -v automated | cut -d' ' -f1 | xargs -I{} $primary2 rds delete-db-snapshot --db-snapshot-identifier {}
+	list-snapshots | tail -n+2 | grep -v automated | cut -d' ' -f1 | xargs -I{} $primary rds delete-db-snapshot --db-snapshot-identifier {}
 }
 status_usage() {
   printf "Gets the status of an existing snapshot\n"
@@ -304,12 +561,28 @@ run() {
       create "${input[@]}"
       exit
       ;;
+    "delete")
+      delete "${input[@]}"
+      exit
+      ;;
+    "list-instances")
+      list-instances "${input[@]}"
+      exit
+      ;;
+    "list-snapshots")
+      list-snapshots "${input[@]}"
+      exit
+      ;;
+    "purge")
+      purge "${input[@]}"
+      exit
+      ;;
     "status")
       status "${input[@]}"
       exit
       ;;
     "")
-      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "create, status" >&2
+      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "create, delete, list-instances, list-snapshots, purge, status" >&2
       usage >&2
       exit 1
       ;;

@@ -67,25 +67,25 @@ inspect_args() {
 
 set -eo pipefail
 ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-DEMO_NAME="${DEMO_NAME:-"cross-region-cross-account-rds-backups"}"
-primary="aws --profile cloudbridge-dba-primary"
+DEMO_NAME="${DEMO_NAME:-"cross-region-cross-account-rds-backups-cr"}"
+primary="aws --profile cloudbridge-dba-primary-2"
 
 version() {
   echo "0.1.0"
 }
 usage() {
-  printf "Handle the cold-start resources\n"
+  printf "Handle the cross-region resources\n"
   printf "\n\033[4m%s\033[0m\n" "Usage:"
-  printf "  cold-start [OPTIONS] [COMMAND] [COMMAND_OPTIONS]\n"
-  printf "  cold-start -h|--help\n"
-  printf "  cold-start -v|--version\n"
+  printf "  cross-region [OPTIONS] [COMMAND] [COMMAND_OPTIONS]\n"
+  printf "  cross-region -h|--help\n"
+  printf "  cross-region -v|--version\n"
   printf "\n\033[4m%s\033[0m\n" "Commands:"
   cat <<EOF
-  create ..... Deploy the cold-start resources using CloudFormation
-  destroy .... Destroys the cold-start resources using CloudFormation
-  status ..... Get the status of the deployed cold-start resources
+  create ..... Deploy the cross-region resources using CloudFormation
+  destroy .... Destroys the cross-region resources using CloudFormation
+  status ..... Get the status of the deployed cross-region resources
   track ...... Track the update of a CloudFormation template
-  update ..... Update the cold-start resources using CloudFormation
+  update ..... Update the cross-region resources using CloudFormation
 EOF
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
@@ -147,7 +147,7 @@ parse_arguments() {
   esac
 }
 create_usage() {
-  printf "Deploy the cold-start resources using CloudFormation\n"
+  printf "Deploy the cross-region resources using CloudFormation\n"
 
   printf "\n\033[4m%s\033[0m\n" "Usage:"
   printf "  create [OPTIONS]\n"
@@ -157,8 +157,12 @@ create_usage() {
   printf "  -e --environment [<ENVIRONMENT>]\n"
   printf "    The name of the environment to depoy to.\n"
   printf "    [@default dev]\n"
+  printf "  --lambda-execution-role-arn [<LAMBDA-EXECUTION-ROLE-ARN>]\n"
+  printf "    The ARN of the role to use for the Lambda execution.\n"
   printf "  -p --parameters [<PARAMETERS>]\n"
   printf "    The name of the parameters file to use.\n"
+  printf "  --principal-kms-key-arn [<PRINCIPAL-KMS-KEY-ARN>]\n"
+  printf "    The ARN of the KMS key to use for the cross-account access.\n"
   printf "  -s --stack-name [<STACK-NAME>]\n"
   printf "    The name of the stack to use.\n"
   printf "  -t --template [<TEMPLATE>]\n"
@@ -192,8 +196,16 @@ parse_create_arguments() {
         rargs_environment="$2"
         shift 2
         ;;
+      --lambda-execution-role-arn)
+        rargs_lambda_execution_role_arn="$2"
+        shift 2
+        ;;
       -p | --parameters)
         rargs_parameters="$2"
+        shift 2
+        ;;
+      --principal-kms-key-arn)
+        rargs_principal_kms_key_arn="$2"
         shift 2
         ;;
       -s | --stack-name)
@@ -218,15 +230,27 @@ parse_create_arguments() {
     esac
   done
 }
-# Deploy the cold-start resources using CloudFormation
+# Deploy the cross-region resources using CloudFormation
 create() {
   local rargs_no_track
   local rargs_environment
+  local rargs_lambda_execution_role_arn
   local rargs_parameters
+  local rargs_principal_kms_key_arn
   local rargs_stack_name
   local rargs_template
   # Parse command arguments
   parse_create_arguments "$@"
+
+  # Check dependencies
+  dependency="jo"
+  if ! command -v $dependency >/dev/null 2>&1; then
+    printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing dependency: " "$dependency" >&2
+    printf "You need to install jo to use this command.\n" >&2
+    exit 1
+  else
+    deps["$dependency"]="$(command -v $dependency | head -n1)"
+  fi
 
   
     
@@ -238,11 +262,21 @@ create() {
 		rargs_stack_name="$DEMO_NAME-$rargs_environment"
 	fi
 	if [[ -z "$rargs_template" ]]; then
-		rargs_template="$ROOT_DIRECTORY/../cold-start-cf-template.yaml"
+		rargs_template="$ROOT_DIRECTORY/../cross-region-cf-template.yaml"
 	fi
 	if [[ -z "$rargs_parameters" ]]; then
-		rargs_parameters="$ROOT_DIRECTORY/../cold-start-parameters.$rargs_environment.json"
+		rargs_parameters="$ROOT_DIRECTORY/../cross-region-parameters.$rargs_environment.json"
 	fi
+	if [[ -z "$rargs_principal_kms_key_arn" ]]; then
+		rargs_principal_kms_key_arn="$("$ROOT_DIRECTORY/events.sh" status | yq -r '.Outputs[] | select(.OutputKey == "PrincipalKmsKeyArn").OutputValue')"
+	fi
+	if [[ -z "$rargs_lambda_execution_role_arn" ]]; then
+		rargs_lambda_execution_role_arn="$("$ROOT_DIRECTORY/events.sh" status | yq -r '.Outputs[] | select(.OutputKey == "LambdaExecutionRoleArn").OutputValue')"
+	fi
+	jo -a \
+		"$(jo ParameterKey=PrincipalKmsKeyArn ParameterValue="$rargs_principal_kms_key_arn")" \
+		"$(jo ParameterKey=LambdaExecutionRoleArn ParameterValue="$rargs_lambda_execution_role_arn")" \
+		>"$rargs_parameters"
 	echo "Attempting to create stack $rargs_stack_name" >&2
 	if ! $primary cloudformation create-stack \
 		--stack-name "$rargs_stack_name" \
@@ -254,6 +288,8 @@ create() {
 			--stack-name "$rargs_stack_name" \
 			--template "$rargs_template" \
 			--parameters "$rargs_parameters" \
+			--principal-kms-key-arn "$rargs_principal_kms_key_arn" \
+			--lambda-execution-role-arn "$rargs_lambda_execution_role_arn" \
 			--no-track
 	fi
 	if [[ -z "$rargs_no_track" ]]; then
@@ -262,7 +298,7 @@ create() {
 	exit $?
 }
 destroy_usage() {
-  printf "Destroys the cold-start resources using CloudFormation\n"
+  printf "Destroys the cross-region resources using CloudFormation\n"
 
   printf "\n\033[4m%s\033[0m\n" "Usage:"
   printf "  destroy [OPTIONS]\n"
@@ -321,7 +357,7 @@ parse_destroy_arguments() {
     esac
   done
 }
-# Destroys the cold-start resources using CloudFormation
+# Destroys the cross-region resources using CloudFormation
 destroy() {
   local rargs_no_track
   local rargs_environment
@@ -345,7 +381,7 @@ destroy() {
 	fi
 }
 status_usage() {
-  printf "Get the status of the deployed cold-start resources\n"
+  printf "Get the status of the deployed cross-region resources\n"
 
   printf "\n\033[4m%s\033[0m\n" "Usage:"
   printf "  status [OPTIONS]\n"
@@ -398,7 +434,7 @@ parse_status_arguments() {
     esac
   done
 }
-# Get the status of the deployed cold-start resources
+# Get the status of the deployed cross-region resources
 status() {
   local rargs_environment
   local rargs_stack_name
@@ -564,7 +600,7 @@ track() {
 	return $EXIT_STATUS
 }
 update_usage() {
-  printf "Update the cold-start resources using CloudFormation\n"
+  printf "Update the cross-region resources using CloudFormation\n"
 
   printf "\n\033[4m%s\033[0m\n" "Usage:"
   printf "  update [OPTIONS]\n"
@@ -574,8 +610,12 @@ update_usage() {
   printf "  -e --environment [<ENVIRONMENT>]\n"
   printf "    The name of the environment to depoy to.\n"
   printf "    [@default dev]\n"
+  printf "  --lambda-execution-role-arn [<LAMBDA-EXECUTION-ROLE-ARN>]\n"
+  printf "    The ARN of the role to use for the Lambda execution.\n"
   printf "  -p --parameters [<PARAMETERS>]\n"
   printf "    The name of the parameters file to use.\n"
+  printf "  --principal-kms-key-arn [<PRINCIPAL-KMS-KEY-ARN>]\n"
+  printf "    The ARN of the KMS key to use for the cross-account access.\n"
   printf "  -s --stack-name [<STACK-NAME>]\n"
   printf "    The name of the stack to use.\n"
   printf "  -t --template [<TEMPLATE>]\n"
@@ -609,8 +649,16 @@ parse_update_arguments() {
         rargs_environment="$2"
         shift 2
         ;;
+      --lambda-execution-role-arn)
+        rargs_lambda_execution_role_arn="$2"
+        shift 2
+        ;;
       -p | --parameters)
         rargs_parameters="$2"
+        shift 2
+        ;;
+      --principal-kms-key-arn)
+        rargs_principal_kms_key_arn="$2"
         shift 2
         ;;
       -s | --stack-name)
@@ -635,15 +683,27 @@ parse_update_arguments() {
     esac
   done
 }
-# Update the cold-start resources using CloudFormation
+# Update the cross-region resources using CloudFormation
 update() {
   local rargs_no_track
   local rargs_environment
+  local rargs_lambda_execution_role_arn
   local rargs_parameters
+  local rargs_principal_kms_key_arn
   local rargs_stack_name
   local rargs_template
   # Parse command arguments
   parse_update_arguments "$@"
+
+  # Check dependencies
+  dependency="jo"
+  if ! command -v $dependency >/dev/null 2>&1; then
+    printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing dependency: " "$dependency" >&2
+    printf "You need to install jo to use this command.\n" >&2
+    exit 1
+  else
+    deps["$dependency"]="$(command -v $dependency | head -n1)"
+  fi
 
   
     
@@ -655,11 +715,21 @@ update() {
 		rargs_stack_name="$DEMO_NAME-$rargs_environment"
 	fi
 	if [[ -z "$rargs_template" ]]; then
-		rargs_template="$ROOT_DIRECTORY/../cold-start-cf-template.yaml"
+		rargs_template="$ROOT_DIRECTORY/../cross-region-cf-template.yaml"
 	fi
 	if [[ -z "$rargs_parameters" ]]; then
-		rargs_parameters="$ROOT_DIRECTORY/../cold-start-parameters.$rargs_environment.json"
+		rargs_parameters="$ROOT_DIRECTORY/../cross-region-parameters.$rargs_environment.json"
 	fi
+	if [[ -z "$rargs_principal_kms_key_arn" ]]; then
+		rargs_principal_kms_key_arn="$("$ROOT_DIRECTORY/events.sh" status | yq -r '.Outputs[] | select(.OutputKey == "PrincipalKmsKeyArn").OutputValue')"
+	fi
+	if [[ -z "$rargs_lambda_execution_role_arn" ]]; then
+		rargs_lambda_execution_role_arn="$("$ROOT_DIRECTORY/events.sh" status | yq -r '.Outputs[] | select(.OutputKey == "LambdaExecutionRoleArn").OutputValue')"
+	fi
+	jo -a \
+		"$(jo ParameterKey=PrincipalKmsKeyArn ParameterValue="$rargs_principal_kms_key_arn")" \
+		"$(jo ParameterKey=LambdaExecutionRoleArn ParameterValue="$rargs_lambda_execution_role_arn")" \
+		>"$rargs_parameters"
 	change_set_name="$rargs_stack_name-change-set-$(date +%s)"
 	echo "Creating change set $change_set_name" >&2
 	$primary cloudformation create-change-set \

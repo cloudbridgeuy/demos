@@ -1,0 +1,236 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Template para la creación de una funcion lambda que se ejecuta cuando una Snapshot se crea y esta "available"
+
+Parameters:
+  AwsRegion:
+    Description: Region de origen de AWS en la cuenta principal
+    Type: String
+  DestinationAwsRegion:
+    Description: Region de destino de AWS en la cuenta principal
+    Type: String
+
+Resources:
+  ManualSnapshotEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Regla de EventBridge para la gestion de snapshots manuales.
+      EventPattern:
+        source: ["aws.rds"]
+        detail-type: ["RDS DB Snapshot Event"]
+        account:
+          - !Sub ${AWS::AccountId}
+        region:
+          - !Ref AwsRegion
+        detail:
+          SourceType: ["SNAPSHOT"]
+          EventID: ["RDS-EVENT-0042"]
+      State: ENABLED
+      Targets:
+        - Arn:
+            Fn::GetAtt: [SnapshotLambdaFunction, Arn]
+          Id: SnapshotLambdaTarget
+
+  AutomaticSnapshotEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Regla de EventBridge para la gestion de snapshots automaticos.
+      EventPattern:
+        source: ["aws.rds"]
+        detail-type: ["RDS DB Snapshot Event"]
+        account:
+          - !Sub ${AWS::AccountId}
+        region:
+          - !Ref AwsRegion
+        detail:
+          SourceType: ["SNAPSHOT"]
+          EventID: ["RDS-EVENT-0091"]
+      State: ENABLED
+      Targets:
+        - Arn:
+            Fn::GetAtt: [SnapshotLambdaFunction, Arn]
+          Id: SnapshotLambdaTarget
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBSnapshots
+                  - rds:CopyDBSnapshot
+                  - rds:AddTagsToResource
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - kms:CreateGrant
+                  - kms:DescribeKey
+                  - kms:Encrypt
+                  - kms:ReEncrypt*
+                  - kms:GenerateDataKey*
+                  - kms:DescribeKey
+                Resource: "*"
+
+  SnapshotLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: PrincipalKmsKey
+    Properties:
+      Handler: index.handler
+      Role:
+        Fn::GetAtt: [LambdaExecutionRole, Arn]
+      Code:
+        ZipFile: |
+          import os
+          import json
+
+          import boto3
+          from botocore.config import Config
+
+
+          def handler(event, _):
+              """
+              Este lambda se encarga de copiar los snapshots que se crean en la region origen
+              a la region destino.
+              """
+              config = Config(
+                  region_name=os.environ["DESTINATION_REGION"],
+              )
+              client = boto3.client("rds", config=config)
+              copy_snapshot_response = {}
+
+              print("Procesando nuevo evento")
+
+              for snapshot_arn in event["resources"]:
+                  # Necesitamos extraer el nombre del snapshot del ARN
+                  print(f"Snapshot ARN: {snapshot_arn}")
+
+                  snapshot_name = snapshot_arn.split(":")[-1]
+                  print(f"Snapshot Name: {snapshot_name}")
+
+                  copy_snapshot_response = client.copy_db_snapshot(
+                      SourceDBSnapshotIdentifier=snapshot_arn,
+                      TargetDBSnapshotIdentifier=f"copy-{snapshot_name}",
+                      KmsKeyId=os.environ["KMS_KEY_ID"],
+                      Tags=[
+                          {"Key": "source_arn", "Value": snapshot_arn},
+                          {"Key": "source_name", "Value": snapshot_name},
+                          {"Key": "copy", "Value": "true"},
+                          {"Key": "source_region", "Value": os.environ["SOURCE_REGION"]},
+                      ],
+                      CopyTags=True,
+                      SourceRegion=os.environ["SOURCE_REGION"],
+                  )
+              print("Copia de snapshot finalizada con exito")
+              return {"statusCode": 200, "body": json.dumps(copy_snapshot_response, sort_keys=True, default=str)}
+      Runtime: python3.8
+      Environment:
+        Variables:
+          DESTINATION_REGION: !Ref DestinationAwsRegion
+          SOURCE_REGION: !Ref AwsRegion
+          KMS_KEY_ID: !Ref PrincipalKmsKey
+      Timeout: 30
+
+  AutomaticPermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Ref: SnapshotLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn:
+        Fn::GetAtt: [AutomaticSnapshotEventRule, Arn]
+
+  ManualPermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Ref: SnapshotLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn:
+        Fn::GetAtt: [ManualSnapshotEventRule, Arn]
+
+  PrincipalKmsKey:
+    Type: "AWS::KMS::Key"
+    Properties:
+      Description: "Llave KMS para copiar los snapshots creados por RDS."
+      MultiRegion: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: "Id-Kms-1"
+        Statement:
+          - Sid: "Enable IAM User Permissions"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: "Permitir el uso con RDS"
+            Effect: "Allow"
+            Principal:
+              Service: "rds.amazonaws.com"
+            Action:
+              - "kms:CreateGrant"
+              - "kms:ListGrant"
+              - "kms:RevokeGrant"
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+          - Sid: "Permitir a la funcion lambda del uso de la llave"
+            Effect: "Allow"
+            Principal:
+              AWS: !GetAtt LambdaExecutionRole.Arn
+            Action:
+              - "kms:CreateGrant"
+              - "kms:ListGrant"
+              - "kms:RevokeGrant"
+              - "kms:DescribeKey"
+              - "kms:Encrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+            Condition: { "Bool": { "kms:GrantIsForAWSResource": true } }
+
+Outputs:
+  LambdaFunctionName:
+    Description: El nombre de la funcion lambda
+    Value:
+      Ref: SnapshotLambdaFunction
+  LambdaFunctionArn:
+    Description: El ARN de la funcion lambda
+    Value:
+      Fn::GetAtt: [SnapshotLambdaFunction, Arn]
+  AutomaticEventRuleName:
+    Description: El nombre de la regla de EventBridge para snapshots automaticos
+    Value:
+      Ref: AutomaticSnapshotEventRule
+  ManualEventRuleName:
+    Description: El nombre de la regla de EventBridge para snapshots manuales
+    Value:
+      Ref: ManualSnapshotEventRule
+  PrincipalKmsKeyArn:
+    Description: El ARN de la llave KMS principal
+    Value: !GetAtt PrincipalKmsKey.Arn
+  LambdaExecutionRoleArn:
+    Description: El ARN del rol de la funcion lambda
+    Value: !GetAtt LambdaExecutionRole.Arn
