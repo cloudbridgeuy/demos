@@ -79,13 +79,14 @@ usage() {
   printf "  cross-region-cross-account-rds-backups -v|--version\n"
   printf "\n\033[4m%s\033[0m\n" "Commands:"
   cat <<EOF
-  cold-start ...... Handle cold-start resources
-  cross-region .... Handle cross-region resources
-  down ............ Destroy all the DEMO resources
-  events .......... Handle events and events resources
-  snapshots ....... Handle snapshots
-  up .............. Create all the DEMO resources
-  update .......... Update the DEMO resources
+  cold-start ....... Handle cold-start resources
+  cross-account .... Handle cross-region resources
+  cross-region ..... Handle cross-region resources
+  down ............. Destroy all the DEMO resources
+  events ........... Handle events and events resources
+  snapshots ........ Handle snapshots
+  up ............... Create all the DEMO resources
+  update ........... Update the DEMO resources
 EOF
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
@@ -116,6 +117,10 @@ parse_arguments() {
   case $action in
     cold-start)
       action="cold-start"
+      input=("${input[@]:1}")
+      ;;
+    cross-account)
+      action="cross-account"
       input=("${input[@]:1}")
       ;;
     cross-region)
@@ -182,6 +187,38 @@ cold-start() {
   parse_cold-start_arguments "$@"
 
   local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./cold-start.sh"
+	# shellcheck disable=SC2068
+	# shellcheck disable=SC2154
+	"$sub" ${input[@]}
+}
+cross-account_usage() {
+  printf "Handle cross-region resources\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  cross-account [OPTIONS]\n"
+  printf "  cross-account -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_cross-account_arguments() {
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      *)
+        break
+        ;;
+    esac
+  done
+}
+# Handle cross-region resources
+cross-account() {
+  # Parse command arguments
+  parse_cross-account_arguments "$@"
+
+  local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./cross-account.sh"
 	# shellcheck disable=SC2068
 	# shellcheck disable=SC2154
 	"$sub" ${input[@]}
@@ -277,6 +314,7 @@ down() {
   fi
 
 	set +e
+	$self cross-account destroy
 	$self cross-region destroy
 	$self events destroy
 	$self cold-start destroy
@@ -409,6 +447,7 @@ up() {
 	primary_kms_key_arn="$($self events status | yq -r '.Outputs[] | select(.OutputKey == "PrincipalKmsKeyArn").OutputValue')"
 	lambda_function_arn="$($self events status | yq -r '.Outputs[] | select(.OutputKey == "LambdaFunctionArn").OutputValue')"
 	$self cross-region create --primary-kms-key-arn "$primary_kms_key_arn" --lambda-function-arn "$lambda_function_arn"
+	$self cross-account create
 }
 update_usage() {
   printf "Update the DEMO resources\n"
@@ -499,6 +538,10 @@ run() {
       cold-start "${input[@]}"
       exit
       ;;
+    "cross-account")
+      cross-account "${input[@]}"
+      exit
+      ;;
     "cross-region")
       cross-region "${input[@]}"
       exit
@@ -524,7 +567,7 @@ run() {
       exit
       ;;
     "")
-      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "cold-start, cross-region, down, events, snapshots, up, update" >&2
+      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "cold-start, cross-account, cross-region, down, events, snapshots, up, update" >&2
       usage >&2
       exit 1
       ;;

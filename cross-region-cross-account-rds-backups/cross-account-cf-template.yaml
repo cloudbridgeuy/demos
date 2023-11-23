@@ -6,72 +6,86 @@ Parameters:
   AwsRegion:
     Description: Region de origen de AWS en la cuenta principal
     Type: String
-  SecondaryAccount:
-    Description: Cuenta de contingencia para el almacenado de Snapshots de RDS
-    Type: String
-  PrincipalKmsKeyArn:
-    Description: Llave KMS Multi-Region creada en la cuenta principal compartida con la region de contingencia
-    Type: String
-  LambdaExecutionRoleArn:
-    Description: ARN del rol utilizado por Lambda para copiar los snapshots entre regiones.
+  PrimaryAccount:
+    Description: Cuenta principal para el almacenado de Snapshots de RDS
     Type: String
 Resources:
-  ManualSnapshotEventRule:
+  SharedSnapshotEventRule:
     Type: AWS::Events::Rule
     Properties:
-      Description: Regla de EventBridge para la gestion de snapshots manuales.
+      Description: Regla de EventBridge para la detección de eventos generados al momento de compartir un snapshot.
       EventPattern:
-        source: ["aws.rds"]
-        detail-type: ["RDS DB Snapshot Event"]
+        source: ["atos.rds"]
+        detail-type: ["RDS DB Shared Snapshot Event"]
         account:
-          - !Sub ${AWS::AccountId}
+          - !Ref PrimaryAccount
         region:
           - !Ref AwsRegion
         detail:
           SourceType: ["SNAPSHOT"]
-          EventID: ["RDS-EVENT-0042"]
+          EventID: ["CROSS-ACCOUNT-SHARED-SNAPSHOT"]
       State: ENABLED
       Targets:
         - Arn:
             Fn::GetAtt: [SnapshotLambdaFunction, Arn]
           Id: SnapshotLambdaTarget
 
-  AutomaticSnapshotEventRule:
-    Type: AWS::Events::Rule
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
     Properties:
-      Description: Regla de EventBridge para la gestion de snapshots automaticos.
-      EventPattern:
-        source: ["aws.rds"]
-        detail-type: ["RDS DB Snapshot Event"]
-        account:
-          - !Sub ${AWS::AccountId}
-        region:
-          - !Ref AwsRegion
-        detail:
-          SourceType: ["SNAPSHOT"]
-          EventID: ["RDS-EVENT-0091"]
-      State: ENABLED
-      Targets:
-        - Arn:
-            Fn::GetAtt: [SnapshotLambdaFunction, Arn]
-          Id: SnapshotLambdaTarget
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBSnapshots
+                  - rds:CopyDBSnapshot
+                  - rds:AddTagsToResource
+                  - rds:ModifyDBSnapshotAttribute
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - kms:CreateGrant
+                  - kms:DescribeKey
+                  - kms:Encrypt
+                  - kms:ReEncrypt*
+                  - kms:GenerateDataKey*
+                  - kms:DescribeKey
+                Resource: "*"
 
   SnapshotLambdaFunction:
     Type: AWS::Lambda::Function
+    DependsOn: SecondaryKmsKey
     Properties:
       Handler: index.handler
-      Role: !Ref LambdaExecutionRoleArn
+      Role:
+        Fn::GetAtt: [LambdaExecutionRole, Arn]
       Code:
         ZipFile: |
           ${LAMBDA_CONTENTS}
       Runtime: python3.8
       Environment:
         Variables:
-          SOURCE_REGION: !Ref AwsRegion
-          DESTINATION_ACCOUNT: !Ref SecondaryAccount
+          PRIMARY_ACCOUNT: !Ref PrimaryAccount
+          KMS_KEY_ID: !Ref SecondaryKmsKey
       Timeout: 30
 
-  AutomaticPermissionForEventsToInvokeLambda:
+  PermissionForEventsToInvokeLambda:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName:
@@ -79,26 +93,16 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn:
-        Fn::GetAtt: [AutomaticSnapshotEventRule, Arn]
+        Fn::GetAtt: [SharedSnapshotEventRule, Arn]
 
-  ManualPermissionForEventsToInvokeLambda:
-    Type: AWS::Lambda::Permission
+  SecondaryKmsKey:
+    Type: "AWS::KMS::Key"
     Properties:
-      FunctionName:
-        Ref: SnapshotLambdaFunction
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn:
-        Fn::GetAtt: [ManualSnapshotEventRule, Arn]
-
-  PrincipalKmsKeyReplica:
-    Type: "AWS::KMS::ReplicaKey"
-    Properties:
-      PrimaryKeyArn: !Ref PrincipalKmsKeyArn
-      Description: "Replica de PrincipalKmsKey en region de contingencia"
+      Description: "Llave KMS para copiar los snapshots creados por RDS."
+      MultiRegion: true
       KeyPolicy:
         Version: "2012-10-17"
-        Id: "Id-Kms-Replica-1"
+        Id: "Id-Kms-1"
         Statement:
           - Sid: "Enable IAM User Permissions"
             Effect: "Allow"
@@ -123,7 +127,7 @@ Resources:
           - Sid: "Permitir el uso con la cuenta de contingencia"
             Effect: "Allow"
             Principal:
-              AWS: !Sub "arn:aws:iam::${SecondaryAccount}:root"
+              AWS: !Sub "arn:aws:iam::${PrimaryAccount}:root"
             Action:
               - "kms:CreateGrant"
               - "kms:ListGrant"
@@ -137,7 +141,7 @@ Resources:
           - Sid: "Permitir a la funcion lambda del uso de la llave"
             Effect: "Allow"
             Principal:
-              AWS: !Ref LambdaExecutionRoleArn
+              AWS: !GetAtt LambdaExecutionRole.Arn
             Action:
               - "kms:CreateGrant"
               - "kms:ListGrant"
@@ -149,7 +153,3 @@ Resources:
               - "kms:DescribeKey"
             Resource: "*"
             Condition: { "Bool": { "kms:GrantIsForAWSResource": true } }
-Outputs:
-  PrincipalKmsKeyReplicaArn:
-    Value: !GetAtt PrincipalKmsKeyReplica.Arn
-    Description: "The ARN of the KMS Key Replica for RDS snapshots in us- east-2"

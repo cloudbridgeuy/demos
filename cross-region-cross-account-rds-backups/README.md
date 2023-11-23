@@ -203,6 +203,76 @@ END RequestId: fc6c9419-4d8c-4a5a-bd8e-4226ddc894d5
 REPORT RequestId: fc6c9419-4d8c-4a5a-bd8e-4226ddc894d5  Duration: 2804.43 ms    Billed Duration: 2805 ms        Memory Size: 128 MB     Max Memory Used: 70 MB  Init Duration: 262.28 ms
 ```
 
+### Cross-Account
+
+Para la copia de snapshots entre cuentas tenemos que realizar pasos únicos para permitir que desde la región de contingencia podramos enviar eventos a la cuenta de contingencia. Esto lo necesitamos para poder avisarle a la misma que ya puede copiar el snapshot compartido. Lamentablemente AWS no proporciona un evento que se lanze cuando otra cuenta comparte un `snapshot` con la misma.
+
+Es recomendable realizar estos pasos utilizando la consola de administración de AWS.
+
+Primero, ir a EventBridge. Luego `Event Buses` y seleccionar el bus `default`. En la pestaña `Permissions`, seleccionar `Manage permissions` y agregar la nueva política según el siguiente template:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "AllowAccountToPutEvents",
+    "Effect": "Allow",
+    "Principal": {
+      "AWS": "${PRIMARY_ACCOUNT_ID}"
+    },
+    "Action": "events:PutEvents",
+    "Resource": "arn:aws:events:${AWS_REGION}:"${ACCOUNT_ID}:event-bus/default"
+  }]
+}
+```
+
+Ahora tenemos que ir a EventBridge en la cuenta principal.
+
+> **Importante**: Recordar que tenemos que utilizar la misma región en ambos casos. Específicamente, debemos usar la región de _contingencia_.
+
+Vamos a crear una nueva regla que se va a encargar de recibir los eventos y los va a enviar a la cuenta de contingencia. Para esto, debemos crearlo con el siguiente patrón.
+
+```json
+{
+  "account": ["${PRIMARY_ACCOUNT_ID}"],
+  "region": ["${AWS_REGION}"],
+  "source": ["atos.rds"],
+  "detail-type": ["RDS DB Shared Snapshot Event"],
+  "detail": {
+    "SourceType": ["SNAPSHOT"],
+    "EventID": ["CROSS-ACCOUNT-SHARED-SNAPSHOT"]
+  }
+}
+```
+
+Esta regla respondera a eventos customizados que tengan una forma similar a la siguiente:
+
+```json
+{
+  "version": "0",
+  "id": "844e2571-85d4-695f-b930-0153b71dcb42",
+  "detail-type": "RDS DB Shared Snapshot Event",
+  "source": "atos.rds",
+  "account": "751594288501",
+  "time": "2018-10-06T12:26:13Z",
+  "region": "us-east-2",
+  "resources": [
+    "arn:aws:rds:us-east-2:751594288501:snapshot:rds:snapshot-replica-2018-10-06-12-24"
+  ],
+  "detail": {
+    "EventCategories": ["shared"],
+    "SourceType": "SNAPSHOT",
+    "SourceArn": "arn:aws:rds:us-east-1:751594288501:snapshot:rds:snapshot-replica-2018-10-06-12-24",
+    "Date": "2018-10-06T12:26:13.882Z",
+    "SourceIdentifier": "rds:snapshot-replica-2018-10-06-12-24",
+    "Message": "Manual shared snapshot",
+    "EventID": "CROSS-ACCOUNT-SHARED-SNAPSHOT"
+  }
+}
+```
+
+La razón por la cual creamos esta regla a través de la consola de administración es para simplificar el proceso de creación de los roles necesarios para que funcione, dado que AWS lo va a generar por nosotros.
+
 ## Conclusiones
 
 El proceso de copia automática de snapshots entre regiones es factible. Solo es necesario:

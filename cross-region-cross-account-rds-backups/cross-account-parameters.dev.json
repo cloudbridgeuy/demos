@@ -1,0 +1,10 @@
+[
+  {
+    "ParameterKey": "AwsRegion",
+    "ParameterValue": "us-east-2"
+  },
+  {
+    "ParameterKey": "PrimaryAccount",
+    "ParameterValue": "751594288501"
+  }
+]

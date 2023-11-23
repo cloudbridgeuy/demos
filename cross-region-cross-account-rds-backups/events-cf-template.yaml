@@ -2,11 +2,17 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Template para la creación de una funcion lambda que se ejecuta cuando una Snapshot se crea y esta "available"
 
 Parameters:
+  SecondaryAccount:
+    Description: Cuenta de contingencia para el almacenado de Snapshots de RDS
+    Type: String
   AwsRegion:
     Description: Region de origen de AWS en la cuenta principal
     Type: String
   DestinationAwsRegion:
     Description: Region de destino de AWS en la cuenta principal
+    Type: String
+  PrincipalKmsKeyId:
+    Description: Id de la Llave KMS Multi-Region creada en la cuenta principal compartida con la region de contingencia
     Type: String
 
 Resources:
@@ -76,6 +82,7 @@ Resources:
                   - rds:DescribeDBSnapshots
                   - rds:CopyDBSnapshot
                   - rds:AddTagsToResource
+                  - rds:ModifyDBSnapshotAttribute
                 Resource: "*"
               - Effect: Allow
                 Action:
@@ -89,61 +96,19 @@ Resources:
 
   SnapshotLambdaFunction:
     Type: AWS::Lambda::Function
-    DependsOn: PrincipalKmsKey
     Properties:
       Handler: index.handler
       Role:
         Fn::GetAtt: [LambdaExecutionRole, Arn]
       Code:
         ZipFile: |
-          import os
-          import json
-
-          import boto3
-          from botocore.config import Config
-
-
-          def handler(event, _):
-              """
-              Este lambda se encarga de copiar los snapshots que se crean en la region origen
-              a la region destino.
-              """
-              config = Config(
-                  region_name=os.environ["DESTINATION_REGION"],
-              )
-              client = boto3.client("rds", config=config)
-              copy_snapshot_response = {}
-
-              print("Procesando nuevo evento")
-
-              for snapshot_arn in event["resources"]:
-                  # Necesitamos extraer el nombre del snapshot del ARN
-                  print(f"Snapshot ARN: {snapshot_arn}")
-
-                  snapshot_name = snapshot_arn.split(":")[-1]
-                  print(f"Snapshot Name: {snapshot_name}")
-
-                  copy_snapshot_response = client.copy_db_snapshot(
-                      SourceDBSnapshotIdentifier=snapshot_arn,
-                      TargetDBSnapshotIdentifier=f"copy-{snapshot_name}",
-                      KmsKeyId=os.environ["KMS_KEY_ID"],
-                      Tags=[
-                          {"Key": "source_arn", "Value": snapshot_arn},
-                          {"Key": "source_name", "Value": snapshot_name},
-                          {"Key": "copy", "Value": "true"},
-                          {"Key": "source_region", "Value": os.environ["SOURCE_REGION"]},
-                      ],
-                      CopyTags=True,
-                      SourceRegion=os.environ["SOURCE_REGION"],
-                  )
-              print("Copia de snapshot finalizada con exito")
-              return {"statusCode": 200, "body": json.dumps(copy_snapshot_response, sort_keys=True, default=str)}
+          ${LAMBDA_CONTENTS}
       Runtime: python3.8
       Environment:
         Variables:
           DESTINATION_REGION: !Ref DestinationAwsRegion
           SOURCE_REGION: !Ref AwsRegion
-          KMS_KEY_ID: !Ref PrincipalKmsKey
+          KMS_KEY_ID: !Ref PrincipalKmsKeyId
       Timeout: 30
 
   AutomaticPermissionForEventsToInvokeLambda:
@@ -185,6 +150,20 @@ Resources:
             Effect: "Allow"
             Principal:
               Service: "rds.amazonaws.com"
+            Action:
+              - "kms:CreateGrant"
+              - "kms:ListGrant"
+              - "kms:RevokeGrant"
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+          - Sid: "Permitir el uso con la cuenta de contingencia"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${SecondaryAccount}:root"
             Action:
               - "kms:CreateGrant"
               - "kms:ListGrant"

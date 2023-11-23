@@ -11,7 +11,7 @@ def handler(event, _):
     a la region destino.
     """
     config = Config(
-        region_name=os.environ["DESTINATION_REGION"],
+        region_name=os.environ["AWS_REGION"],
     )
     client = boto3.client("rds", config=config)
     copy_snapshot_response = {}
@@ -27,16 +27,17 @@ def handler(event, _):
 
         copy_snapshot_response = client.copy_db_snapshot(
             SourceDBSnapshotIdentifier=snapshot_arn,
-            TargetDBSnapshotIdentifier=f"copy-{snapshot_name}",
+            TargetDBSnapshotIdentifier=f"cross-account-copy-{snapshot_name}",
             KmsKeyId=os.environ["KMS_KEY_ID"],
             Tags=[
                 {"Key": "source_arn", "Value": snapshot_arn},
                 {"Key": "source_name", "Value": snapshot_name},
+                {"Key": "primary_account", "Value": os.environ["PRIMARY_ACCOUNT"]},
                 {"Key": "copy", "Value": "true"},
-                {"Key": "source_region", "Value": os.environ["SOURCE_REGION"]},
+                {"Key": "source_region", "Value": os.environ["AWS_REGION"]},
             ],
             CopyTags=True,
-            SourceRegion=os.environ["SOURCE_REGION"],
+            SourceRegion=os.environ["AWS_REGION"],
         )
     print("Copia de snapshot finalizada con exito")
     return {

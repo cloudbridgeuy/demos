@@ -69,6 +69,7 @@ set -eo pipefail
 ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 DEMO_NAME="${DEMO_NAME:-"cross-region-cross-account-rds-backups-events"}"
 primary="aws --profile cloudbridge-dba-primary"
+secondary="aws --profile cloudbridge-dba-secondary"
 
 version() {
   echo "0.1.0"
@@ -86,6 +87,7 @@ usage() {
   log-groups ..... Get the list of log groups
   log-streams .... Get the log-streams of one of the events lamda function
   logs ........... Get the logs of one of the events lamda function
+  send ........... Send a cross-region shared RDS snapshot event
   status ......... Get the status of the deployed events resources
   track .......... Track the update of a CloudFormation template
   update ......... Update the events resources using CloudFormation
@@ -137,6 +139,10 @@ parse_arguments() {
       action="logs"
       input=("${input[@]:1}")
       ;;
+    send)
+      action="send"
+      input=("${input[@]:1}")
+      ;;
     status)
       action="status"
       input=("${input[@]:1}")
@@ -172,6 +178,8 @@ create_usage() {
   printf "  -e --environment [<ENVIRONMENT>]\n"
   printf "    The name of the environment to depoy to.\n"
   printf "    [@default dev]\n"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to use.\n"
   printf "  -p --parameters [<PARAMETERS>]\n"
   printf "    The name of the parameters file to use.\n"
   printf "  -s --stack-name [<STACK-NAME>]\n"
@@ -207,6 +215,10 @@ parse_create_arguments() {
         rargs_environment="$2"
         shift 2
         ;;
+      -l | --lambda)
+        rargs_lambda="$2"
+        shift 2
+        ;;
       -p | --parameters)
         rargs_parameters="$2"
         shift 2
@@ -237,6 +249,7 @@ parse_create_arguments() {
 create() {
   local rargs_no_track
   local rargs_environment
+  local rargs_lambda
   local rargs_parameters
   local rargs_stack_name
   local rargs_template
@@ -258,10 +271,17 @@ create() {
 	if [[ -z "$rargs_parameters" ]]; then
 		rargs_parameters="$ROOT_DIRECTORY/../events-parameters.$rargs_environment.json"
 	fi
+	if [[ -z "$rargs_lambda" ]]; then
+		rargs_lambda="$ROOT_DIRECTORY/cross_region_rds_snapshot_copy.py"
+	fi
+	tmp="$(mktemp)"
+	LAMBDA_CONTENTS="$(awk 'NR == 1 {print $0; next} {printf "          %s\n", $0}' "$rargs_lambda")"
+	export LAMBDA_CONTENTS
+	envsubst <"$rargs_template" >"$tmp"
 	echo "Attempting to create stack $rargs_stack_name" >&2
 	if ! $primary cloudformation create-stack \
 		--stack-name "$rargs_stack_name" \
-		--template-body "file://$rargs_template" \
+		--template-body "file://$tmp" \
 		--parameters "file://$rargs_parameters" \
 		--capabilities CAPABILITY_IAM; then
 		update \
@@ -584,6 +604,112 @@ logs() {
 		--log-stream-name "$rargs_stream" |
 		jq -r '.events[].message'
 }
+send_usage() {
+  printf "Send a cross-region shared RDS snapshot event\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  send -d|--db-snapshot-name <DB-SNAPSHOT-NAME> [OPTIONS]\n"
+  printf "  send -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -a --account [<ACCOUNT>]\n"
+  printf "    The account to send the event to.\n"
+  printf "    [@default 751594288501]\n"
+  printf "  -d --db-snapshot-name <DB-SNAPSHOT-NAME>\n"
+  printf "    The name of the snapshot to send the event for.\n"
+  printf "  -r --region [<REGION>]\n"
+  printf "    The region to send the event to.\n"
+  printf "    [@default us-east-2]\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_send_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        send_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -a | --account)
+        rargs_account="$2"
+        shift 2
+        ;;
+      -d | --db-snapshot-name)
+        rargs_db_snapshot_name="$2"
+        shift 2
+        ;;
+      -r | --region)
+        rargs_region="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Send a cross-region shared RDS snapshot event
+send() {
+  local rargs_account
+  local rargs_db_snapshot_name
+  local rargs_region
+  # Parse command arguments
+  parse_send_arguments "$@"
+
+  
+    
+  if [[ -z "$rargs_account" ]]; then
+    rargs_account="751594288501"
+  fi
+    
+    
+  if [[ -z "$rargs_region" ]]; then
+    rargs_region="us-east-2"
+  fi
+    
+  
+  if [[ -z "$rargs_db_snapshot_name" ]]; then
+    printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing required option: " "db-snapshot-name" >&2
+    send_usage >&2
+    exit 1
+  fi
+	current_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+	detail="$(jo \
+		EventCategories="shared" \
+		SourceType="SNAPSHOT" \
+		SourceArn="arn:aws:rds:$rargs_region:$rargs_account:snapshot:$rargs_db_snapshot_name" \
+		Date="$current_date" \
+		SourceIdentifier="$rargs_db_snapshot_name" \
+		Message="Manual shared snapshot" \
+		EventID="CROSS-ACCOUNT-SHARED-SNAPSHOT")"
+	json_payload="$(jo -a "$(jo \
+		Time="$current_date" \
+		Source="atos.rds" \
+		Resources="$(jo -a "arn:aws:rds:$rargs_region:$rargs_account:snapshot:$rargs_db_snapshot_name")" \
+		DetailType="RDS DB Shared Snapshot Event" \
+		-s Detail="$detail" \
+		EventBusName="string" \
+		TraceHeader="string")")"
+	echo "$json_payload" | jq -r '.'
+	$primary events put-events --entries "$json_payload"
+}
 status_usage() {
   printf "Get the status of the deployed events resources\n"
 
@@ -814,6 +940,8 @@ update_usage() {
   printf "  -e --environment [<ENVIRONMENT>]\n"
   printf "    The name of the environment to depoy to.\n"
   printf "    [@default dev]\n"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to use.\n"
   printf "  -p --parameters [<PARAMETERS>]\n"
   printf "    The name of the parameters file to use.\n"
   printf "  -s --stack-name [<STACK-NAME>]\n"
@@ -849,6 +977,10 @@ parse_update_arguments() {
         rargs_environment="$2"
         shift 2
         ;;
+      -l | --lambda)
+        rargs_lambda="$2"
+        shift 2
+        ;;
       -p | --parameters)
         rargs_parameters="$2"
         shift 2
@@ -879,6 +1011,7 @@ parse_update_arguments() {
 update() {
   local rargs_no_track
   local rargs_environment
+  local rargs_lambda
   local rargs_parameters
   local rargs_stack_name
   local rargs_template
@@ -900,11 +1033,18 @@ update() {
 	if [[ -z "$rargs_parameters" ]]; then
 		rargs_parameters="$ROOT_DIRECTORY/../events-parameters.$rargs_environment.json"
 	fi
+	if [[ -z "$rargs_lambda" ]]; then
+		rargs_lambda="$ROOT_DIRECTORY/cross_region_rds_snapshot_copy.py"
+	fi
+	tmp="$(mktemp)"
+	LAMBDA_CONTENTS="$(awk 'NR == 1 {print $0; next} {printf "          %s\n", $0}' "$rargs_lambda")"
+	export LAMBDA_CONTENTS
+	envsubst <"$rargs_template" >"$tmp"
 	change_set_name="$rargs_stack_name-change-set-$(date +%s)"
 	echo "Creating change set $change_set_name" >&2
 	$primary cloudformation create-change-set \
 		--stack-name "$rargs_stack_name" \
-		--template-body "file://$rargs_template" \
+		--template-body "file://$tmp" \
 		--parameters "file://$rargs_parameters" \
 		--change-set-name "$change_set_name" \
 		--capabilities CAPABILITY_NAMED_IAM
@@ -954,6 +1094,10 @@ run() {
       logs "${input[@]}"
       exit
       ;;
+    "send")
+      send "${input[@]}"
+      exit
+      ;;
     "status")
       status "${input[@]}"
       exit
@@ -967,7 +1111,7 @@ run() {
       exit
       ;;
     "")
-      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "create, destroy, log-groups, log-streams, logs, status, track, update" >&2
+      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "create, destroy, log-groups, log-streams, logs, send, status, track, update" >&2
       usage >&2
       exit 1
       ;;
