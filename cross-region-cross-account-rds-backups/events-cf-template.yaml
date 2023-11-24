@@ -2,17 +2,11 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Template para la creación de una funcion lambda que se ejecuta cuando una Snapshot se crea y esta "available"
 
 Parameters:
-  SecondaryAccount:
-    Description: Cuenta de contingencia para el almacenado de Snapshots de RDS
-    Type: String
   AwsRegion:
     Description: Region de origen de AWS en la cuenta principal
     Type: String
-  DestinationAwsRegion:
+  CrossRegion:
     Description: Region de destino de AWS en la cuenta principal
-    Type: String
-  PrincipalKmsKeyId:
-    Description: Id de la Llave KMS Multi-Region creada en la cuenta principal compartida con la region de contingencia
     Type: String
 
 Resources:
@@ -93,6 +87,10 @@ Resources:
                   - kms:GenerateDataKey*
                   - kms:DescribeKey
                 Resource: "*"
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: arn:aws:events:*:*:event-bus/default
 
   SnapshotLambdaFunction:
     Type: AWS::Lambda::Function
@@ -106,9 +104,8 @@ Resources:
       Runtime: python3.8
       Environment:
         Variables:
-          DESTINATION_REGION: !Ref DestinationAwsRegion
-          SOURCE_REGION: !Ref AwsRegion
-          KMS_KEY_ID: !Ref PrincipalKmsKeyId
+          CROSS_REGION: !Ref CrossRegion
+          KMS_KEY_ID: !Ref PrincipalKmsKey
       Timeout: 30
 
   AutomaticPermissionForEventsToInvokeLambda:
@@ -163,7 +160,7 @@ Resources:
           - Sid: "Permitir el uso con la cuenta de contingencia"
             Effect: "Allow"
             Principal:
-              AWS: !Sub "arn:aws:iam::${SecondaryAccount}:root"
+              AWS: !Sub "arn:aws:iam::${CrossAccount}:root"
             Action:
               - "kms:CreateGrant"
               - "kms:ListGrant"

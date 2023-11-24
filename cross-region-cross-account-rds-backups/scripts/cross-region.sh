@@ -68,7 +68,7 @@ inspect_args() {
 set -eo pipefail
 ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 DEMO_NAME="${DEMO_NAME:-"cross-region-cross-account-rds-backups-cr"}"
-primary="aws --profile cloudbridge-dba-primary-2"
+primary2="aws --profile cloudbridge-dba-primary-2"
 
 version() {
   echo "0.1.0"
@@ -81,11 +81,14 @@ usage() {
   printf "  cross-region -v|--version\n"
   printf "\n\033[4m%s\033[0m\n" "Commands:"
   cat <<EOF
-  create ..... Deploy the cross-region resources using CloudFormation
-  destroy .... Destroys the cross-region resources using CloudFormation
-  status ..... Get the status of the deployed cross-region resources
-  track ...... Track the update of a CloudFormation template
-  update ..... Update the cross-region resources using CloudFormation
+  create ......... Deploy the cross-region resources using CloudFormation
+  destroy ........ Destroys the cross-region resources using CloudFormation
+  log-groups ..... Get the list of log groups
+  log-streams .... Get the log-streams of one of the events lamda function
+  logs ........... Get the logs of one of the events lamda function
+  status ......... Get the status of the deployed cross-region resources
+  track .......... Track the update of a CloudFormation template
+  update ......... Update the cross-region resources using CloudFormation
 EOF
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
@@ -122,6 +125,18 @@ parse_arguments() {
       action="destroy"
       input=("${input[@]:1}")
       ;;
+    log-groups)
+      action="log-groups"
+      input=("${input[@]:1}")
+      ;;
+    log-streams)
+      action="log-streams"
+      input=("${input[@]:1}")
+      ;;
+    logs)
+      action="logs"
+      input=("${input[@]:1}")
+      ;;
     status)
       action="status"
       input=("${input[@]:1}")
@@ -154,20 +169,15 @@ create_usage() {
   printf "  create -h|--help\n"
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
-  printf "  -d --destination [<DESTINATION>]\n"
-  printf "    The ID of the destination account\n"
-  printf "    [@default 794582806340]\n"
   printf "  -e --environment [<ENVIRONMENT>]\n"
   printf "    The name of the environment to depoy to.\n"
   printf "    [@default dev]\n"
-  printf "  -l --lambda [<LAMBDA>]\n"
-  printf "    The name of the lambda function to use.\n"
   printf "  --lambda-execution-role-arn [<LAMBDA-EXECUTION-ROLE-ARN>]\n"
-  printf "    The ARN of the role to use for the Lambda execution.\n"
+  printf "    The ARN of the lambda execution role to use for the cross-region access.\n"
   printf "  -p --parameters [<PARAMETERS>]\n"
   printf "    The name of the parameters file to use.\n"
   printf "  --principal-kms-key-arn [<PRINCIPAL-KMS-KEY-ARN>]\n"
-  printf "    The ARN of the KMS key to use for the cross-account access.\n"
+  printf "    The ARN of the KMS key to use for the cross-region access.\n"
   printf "  -r --region [<REGION>]\n"
   printf "    The name of the source AWS Region.\n"
   printf "    [@default us-east-2]\n"
@@ -200,16 +210,8 @@ parse_create_arguments() {
         rargs_no_track=1
         shift
         ;;
-      -d | --destination)
-        rargs_destination="$2"
-        shift 2
-        ;;
       -e | --environment)
         rargs_environment="$2"
-        shift 2
-        ;;
-      -l | --lambda)
-        rargs_lambda="$2"
         shift 2
         ;;
       --lambda-execution-role-arn)
@@ -253,9 +255,7 @@ parse_create_arguments() {
 # Deploy the cross-region resources using CloudFormation
 create() {
   local rargs_no_track
-  local rargs_destination
   local rargs_environment
-  local rargs_lambda
   local rargs_lambda_execution_role_arn
   local rargs_parameters
   local rargs_principal_kms_key_arn
@@ -276,11 +276,6 @@ create() {
   fi
 
   
-    
-  if [[ -z "$rargs_destination" ]]; then
-    rargs_destination="794582806340"
-  fi
-    
     
   if [[ -z "$rargs_environment" ]]; then
     rargs_environment="dev"
@@ -306,23 +301,15 @@ create() {
 	if [[ -z "$rargs_lambda_execution_role_arn" ]]; then
 		rargs_lambda_execution_role_arn="$("$ROOT_DIRECTORY/events.sh" status | yq -r '.Outputs[] | select(.OutputKey == "LambdaExecutionRoleArn").OutputValue')"
 	fi
-	if [[ -z "$rargs_lambda" ]]; then
-		rargs_lambda="$ROOT_DIRECTORY/cross_account_rds_snapshot_share.py"
-	fi
-	tmp="$(mktemp)"
-	LAMBDA_CONTENTS="$(awk 'NR == 1 {print $0; next} {printf "          %s\n", $0}' "$rargs_lambda")"
-	export LAMBDA_CONTENTS
-	envsubst <"$rargs_template" >"$tmp"
 	jo -a \
 		"$(jo ParameterKey=PrincipalKmsKeyArn ParameterValue="$rargs_principal_kms_key_arn")" \
-		"$(jo ParameterKey=LambdaExecutionRoleArn ParameterValue="$rargs_lambda_execution_role_arn")" \
 		"$(jo ParameterKey=AwsRegion ParameterValue="$rargs_region")" \
-		"$(jo ParameterKey=SecondaryAccount -s ParameterValue="$rargs_destination")" \
+		"$(jo ParameterKey=LambdaExecutionRoleArn ParameterValue="$rargs_lambda_execution_role_arn")" \
 		>"$rargs_parameters"
 	echo "Attempting to create stack $rargs_stack_name" >&2
-	if ! $primary cloudformation create-stack \
+	if ! $primary2 cloudformation create-stack \
 		--stack-name "$rargs_stack_name" \
-		--template-body "file://$tmp" \
+		--template-body "file://$rargs_template" \
 		--parameters "file://$rargs_parameters" \
 		--capabilities CAPABILITY_IAM; then
 		update \
@@ -416,11 +403,243 @@ destroy() {
 	if [[ -z "$rargs_stack_name" ]]; then
 		rargs_stack_name="$DEMO_NAME-$rargs_environment"
 	fi
-	$primary cloudformation delete-stack \
+	$primary2 cloudformation delete-stack \
 		--stack-name "$rargs_stack_name"
 	if [[ -z "$rargs_no_track" ]]; then
 		track -s "$rargs_stack_name"
 	fi
+}
+log-groups_usage() {
+  printf "Get the list of log groups\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  log-groups [OPTIONS]\n"
+  printf "  log-groups -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to get the logs from.\n"
+  printf "    [@default [=SnapshotLambdaFunction]]\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_log-groups_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        log-groups_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -l | --lambda)
+        rargs_lambda="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Get the list of log groups
+log-groups() {
+  local rargs_lambda
+  # Parse command arguments
+  parse_log-groups_arguments "$@"
+
+  
+    
+  if [[ -z "$rargs_lambda" ]]; then
+    rargs_lambda="[=SnapshotLambdaFunction]"
+  fi
+    
+	$primary2 logs describe-log-groups \
+		--query 'logGroups[].{logGroupName: logGroupName, creationTime: creationTime}' |
+		yq '.[] | .logGroupName + "|" + .creationTime ' |
+		sort -r |
+		grep "$rargs_lambda" |
+		column -t -s'|' |
+		sort -k2,2nr
+}
+log-streams_usage() {
+  printf "Get the log-streams of one of the events lamda function\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  log-streams [OPTIONS]\n"
+  printf "  log-streams -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -g --group [<GROUP>]\n"
+  printf "    The name of the log group to use.\n"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to get the logs from.\n"
+  printf "    [@default [=SnapshotLambdaFunction]]\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_log-streams_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        log-streams_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -g | --group)
+        rargs_group="$2"
+        shift 2
+        ;;
+      -l | --lambda)
+        rargs_lambda="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Get the log-streams of one of the events lamda function
+log-streams() {
+  local rargs_group
+  local rargs_lambda
+  # Parse command arguments
+  parse_log-streams_arguments "$@"
+
+  
+    
+  if [[ -z "$rargs_lambda" ]]; then
+    rargs_lambda="[=SnapshotLambdaFunction]"
+  fi
+    
+	if [[ -z "$rargs_group" ]]; then
+		rargs_group="$(log-groups | grep "$rargs_lambda" | head -n 1 | cut -d' ' -f1)"
+	fi
+	$primary2 logs describe-log-streams \
+		--log-group-name "$rargs_group" \
+		--order-by LastEventTime \
+		--descending \
+		--query 'logStreams[].{logStreamName: logStreamName, creationTime: creationTime}' |
+		yq '.[] | .logStreamName + "|" + .creationTime ' |
+		column -t -s'|' |
+		sort -k2,2nr
+}
+logs_usage() {
+  printf "Get the logs of one of the events lamda function\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Usage:"
+  printf "  logs [OPTIONS]\n"
+  printf "  logs -h|--help\n"
+
+  printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -g --group [<GROUP>]\n"
+  printf "    The name of the log group to use.\n"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to get the logs from.\n"
+  printf "    [@default [=SnapshotLambdaFunction]]\n"
+  printf "  -s --stream [<STREAM>]\n"
+  printf "    The name of the log stream to use.\n"
+  printf "  -h --help\n"
+  printf "    Print help\n"
+}
+parse_logs_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      -h|--help)
+        logs_usage
+        exit
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      -g | --group)
+        rargs_group="$2"
+        shift 2
+        ;;
+      -l | --lambda)
+        rargs_lambda="$2"
+        shift 2
+        ;;
+      -s | --stream)
+        rargs_stream="$2"
+        shift 2
+        ;;
+      -?*)
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid option: " "$key" >&2
+        exit 1
+        ;;
+      *)
+        if [[ "$key" == "" ]]; then
+          break
+        fi
+        printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Invalid argument: " "$key" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+# Get the logs of one of the events lamda function
+logs() {
+  local rargs_group
+  local rargs_lambda
+  local rargs_stream
+  # Parse command arguments
+  parse_logs_arguments "$@"
+
+  
+    
+  if [[ -z "$rargs_lambda" ]]; then
+    rargs_lambda="[=SnapshotLambdaFunction]"
+  fi
+    
+	if [[ -z "$rargs_group" ]]; then
+		rargs_group="$(log-groups -l "$rargs_lambda" | head -n 1 | cut -d' ' -f1)"
+	fi
+	if [[ -z "$rargs_stream" ]]; then
+		rargs_stream="$(log-streams -g "$rargs_group" | head -n 1 | cut -d' ' -f1)"
+	fi
+	$primary2 logs get-log-events \
+		--log-group-name "$rargs_group" \
+		--log-stream-name "$rargs_stream" |
+		jq -r '.events[].message'
 }
 status_usage() {
   printf "Get the status of the deployed cross-region resources\n"
@@ -493,19 +712,19 @@ status() {
 		rargs_stack_name="$DEMO_NAME-$rargs_environment"
 	fi
 	status="$(
-		$primary cloudformation describe-stacks \
+		$primary2 cloudformation describe-stacks \
 			--stack-name "$rargs_stack_name" \
 			--query "Stacks[0].StackStatus" \
 			--output text
 	)"
-	parameters="$($primary cloudformation describe-stacks \
+	parameters="$($primary2 cloudformation describe-stacks \
 		--stack-name "$rargs_stack_name" \
 		--query "Stacks[0].Parameters")"
 	resources="$(
-		$primary cloudformation describe-stack-resources \
+		$primary2 cloudformation describe-stack-resources \
 			--stack-name "$rargs_stack_name"
 	)"
-	outputs="$($primary cloudformation describe-stacks \
+	outputs="$($primary2 cloudformation describe-stacks \
 		--stack-name "$rargs_stack_name" \
 		--query "Stacks[0].Outputs")"
 	{
@@ -601,7 +820,7 @@ track() {
 	fi
 	while True; do
 		status="$(
-			$primary cloudformation describe-stacks \
+			$primary2 cloudformation describe-stacks \
 				--stack-name "$rargs_stack_name" \
 				--query 'Stacks[].StackStatus' | yq -r '.[]'
 		)"
@@ -622,7 +841,7 @@ track() {
 			break
 			;;
 		esac
-		$primary cloudformation describe-stack-events \
+		$primary2 cloudformation describe-stack-events \
 			--stack-name "$rargs_stack_name" \
 			--query 'StackEvents[].{LogicalResourceId: LogicalResourceId, ResourceStatus: ResourceStatus, ResourceStatusReason: ResourceStatusReason}' | yq '.[] | .LogicalResourceId + "|" + .ResourceStatus + "|" + .ResourceStatusReason' |
 			column -t -s'|' |
@@ -649,20 +868,15 @@ update_usage() {
   printf "  update -h|--help\n"
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
-  printf "  -d --destination [<DESTINATION>]\n"
-  printf "    The ID of the destination account\n"
-  printf "    [@default 794582806340]\n"
   printf "  -e --environment [<ENVIRONMENT>]\n"
   printf "    The name of the environment to depoy to.\n"
   printf "    [@default dev]\n"
-  printf "  -l --lambda [<LAMBDA>]\n"
-  printf "    The name of the lambda function to use.\n"
   printf "  --lambda-execution-role-arn [<LAMBDA-EXECUTION-ROLE-ARN>]\n"
-  printf "    The ARN of the role to use for the Lambda execution.\n"
+  printf "    The ARN of the lambda execution role to use for the cross-region access.\n"
   printf "  -p --parameters [<PARAMETERS>]\n"
   printf "    The name of the parameters file to use.\n"
   printf "  --principal-kms-key-arn [<PRINCIPAL-KMS-KEY-ARN>]\n"
-  printf "    The ARN of the KMS key to use for the cross-account access.\n"
+  printf "    The ARN of the KMS key to use for the cross-region access.\n"
   printf "  -r --region [<REGION>]\n"
   printf "    The name of the source AWS Region.\n"
   printf "    [@default us-east-2]\n"
@@ -695,16 +909,8 @@ parse_update_arguments() {
         rargs_no_track=1
         shift
         ;;
-      -d | --destination)
-        rargs_destination="$2"
-        shift 2
-        ;;
       -e | --environment)
         rargs_environment="$2"
-        shift 2
-        ;;
-      -l | --lambda)
-        rargs_lambda="$2"
         shift 2
         ;;
       --lambda-execution-role-arn)
@@ -748,9 +954,7 @@ parse_update_arguments() {
 # Update the cross-region resources using CloudFormation
 update() {
   local rargs_no_track
-  local rargs_destination
   local rargs_environment
-  local rargs_lambda
   local rargs_lambda_execution_role_arn
   local rargs_parameters
   local rargs_principal_kms_key_arn
@@ -771,11 +975,6 @@ update() {
   fi
 
   
-    
-  if [[ -z "$rargs_destination" ]]; then
-    rargs_destination="794582806340"
-  fi
-    
     
   if [[ -z "$rargs_environment" ]]; then
     rargs_environment="dev"
@@ -801,37 +1000,29 @@ update() {
 	if [[ -z "$rargs_lambda_execution_role_arn" ]]; then
 		rargs_lambda_execution_role_arn="$("$ROOT_DIRECTORY/events.sh" status | yq -r '.Outputs[] | select(.OutputKey == "LambdaExecutionRoleArn").OutputValue')"
 	fi
-	if [[ -z "$rargs_lambda" ]]; then
-		rargs_lambda="$ROOT_DIRECTORY/cross_account_rds_snapshot_share.py"
-	fi
-	tmp="$(mktemp)"
-	LAMBDA_CONTENTS="$(awk 'NR == 1 {print $0; next} {printf "          %s\n", $0}' "$rargs_lambda")"
-	export LAMBDA_CONTENTS
-	envsubst <"$rargs_template" >"$tmp"
 	jo -a \
 		"$(jo ParameterKey=PrincipalKmsKeyArn ParameterValue="$rargs_principal_kms_key_arn")" \
-		"$(jo ParameterKey=LambdaExecutionRoleArn ParameterValue="$rargs_lambda_execution_role_arn")" \
 		"$(jo ParameterKey=AwsRegion ParameterValue="$rargs_region")" \
-		"$(jo ParameterKey=SecondaryAccount -s ParameterValue="$rargs_destination")" \
+		"$(jo ParameterKey=LambdaExecutionRoleArn ParameterValue="$rargs_lambda_execution_role_arn")" \
 		>"$rargs_parameters"
 	change_set_name="$rargs_stack_name-change-set-$(date +%s)"
 	echo "Creating change set $change_set_name" >&2
-	$primary cloudformation create-change-set \
+	$primary2 cloudformation create-change-set \
 		--stack-name "$rargs_stack_name" \
-		--template-body "file://$tmp" \
+		--template-body "file://$rargs_template" \
 		--parameters "file://$rargs_parameters" \
 		--change-set-name "$change_set_name" \
 		--capabilities CAPABILITY_NAMED_IAM
 	echo "Waiting for change set to be created" >&2
-	$primary cloudformation wait change-set-create-complete \
+	$primary2 cloudformation wait change-set-create-complete \
 		--stack-name "$rargs_stack_name" \
 		--change-set-name "$change_set_name"
 	echo "Change set details" >&2
-	$primary cloudformation describe-change-set \
+	$primary2 cloudformation describe-change-set \
 		--stack-name "$rargs_stack_name" \
 		--change-set-name "$change_set_name" | yq -P '.Changes'
 	echo "Executing change set $change_set_name" >&2
-	$primary cloudformation execute-change-set \
+	$primary2 cloudformation execute-change-set \
 		--stack-name "$rargs_stack_name" \
 		--change-set-name "$change_set_name"
 	if [[ -z "$rargs_no_track" ]]; then
@@ -855,6 +1046,18 @@ run() {
       destroy "${input[@]}"
       exit
       ;;
+    "log-groups")
+      log-groups "${input[@]}"
+      exit
+      ;;
+    "log-streams")
+      log-streams "${input[@]}"
+      exit
+      ;;
+    "logs")
+      logs "${input[@]}"
+      exit
+      ;;
     "status")
       status "${input[@]}"
       exit
@@ -868,7 +1071,7 @@ run() {
       exit
       ;;
     "")
-      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "create, destroy, status, track, update" >&2
+      printf "\e[31m%s\e[33m%s\e[31m\e[0m\n\n" "Missing command. Select one of " "create, destroy, log-groups, log-streams, logs, status, track, update" >&2
       usage >&2
       exit 1
       ;;

@@ -4,11 +4,7 @@
     "ParameterValue": "us-east-1"
   },
   {
-    "ParameterKey": "SecondaryAccount",
-    "ParameterValue": "794582806340"
-  },
-  {
-    "ParameterKey": "DestinationAwsRegion",
+    "ParameterKey": "CrossRegion",
     "ParameterValue": "us-east-2"
   }
 ]

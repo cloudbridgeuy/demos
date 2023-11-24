@@ -6,37 +6,17 @@ Parameters:
   AwsRegion:
     Description: Region de origen de AWS en la cuenta principal
     Type: String
-  SecondaryAccount:
-    Description: Cuenta de contingencia para el almacenado de Snapshots de RDS
-    Type: String
   PrincipalKmsKeyArn:
     Description: Llave KMS Multi-Region creada en la cuenta principal compartida con la region de contingencia
     Type: String
   LambdaExecutionRoleArn:
-    Description: ARN del rol utilizado por Lambda para copiar los snapshots entre regiones.
+    Description: Rol de lambda que debe tener accesso a la Replica de KMS.
+    Type: String
+  CrossAccount:
+    Description: Cuenta de contingencia para el almacenado de Snapshots de RDS
     Type: String
 Resources:
-  ManualSnapshotEventRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Description: Regla de EventBridge para la gestion de snapshots manuales.
-      EventPattern:
-        source: ["aws.rds"]
-        detail-type: ["RDS DB Snapshot Event"]
-        account:
-          - !Sub ${AWS::AccountId}
-        region:
-          - !Ref AwsRegion
-        detail:
-          SourceType: ["SNAPSHOT"]
-          EventID: ["RDS-EVENT-0042"]
-      State: ENABLED
-      Targets:
-        - Arn:
-            Fn::GetAtt: [SnapshotLambdaFunction, Arn]
-          Id: SnapshotLambdaTarget
-
-  AutomaticSnapshotEventRule:
+  CopySnapshotEventRule:
     Type: AWS::Events::Rule
     Properties:
       Description: Regla de EventBridge para la gestion de snapshots automaticos.
@@ -45,11 +25,9 @@ Resources:
         detail-type: ["RDS DB Snapshot Event"]
         account:
           - !Sub ${AWS::AccountId}
-        region:
-          - !Ref AwsRegion
         detail:
           SourceType: ["SNAPSHOT"]
-          EventID: ["RDS-EVENT-0091"]
+          EventID: ["RDS-EVENT-0060"]
       State: ENABLED
       Targets:
         - Arn:
@@ -67,11 +45,10 @@ Resources:
       Runtime: python3.8
       Environment:
         Variables:
-          SOURCE_REGION: !Ref AwsRegion
-          DESTINATION_ACCOUNT: !Ref SecondaryAccount
+          CROSS_ACCOUNT: !Ref CrossAccount
       Timeout: 30
 
-  AutomaticPermissionForEventsToInvokeLambda:
+  CopyPermissionForEventsToInvokeLambda:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName:
@@ -79,17 +56,7 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn:
-        Fn::GetAtt: [AutomaticSnapshotEventRule, Arn]
-
-  ManualPermissionForEventsToInvokeLambda:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Ref: SnapshotLambdaFunction
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn:
-        Fn::GetAtt: [ManualSnapshotEventRule, Arn]
+        Fn::GetAtt: [CopySnapshotEventRule, Arn]
 
   PrincipalKmsKeyReplica:
     Type: "AWS::KMS::ReplicaKey"
@@ -110,20 +77,6 @@ Resources:
             Effect: "Allow"
             Principal:
               Service: "rds.amazonaws.com"
-            Action:
-              - "kms:CreateGrant"
-              - "kms:ListGrant"
-              - "kms:RevokeGrant"
-              - "kms:Encrypt"
-              - "kms:Decrypt"
-              - "kms:ReEncrypt*"
-              - "kms:GenerateDataKey*"
-              - "kms:DescribeKey"
-            Resource: "*"
-          - Sid: "Permitir el uso con la cuenta de contingencia"
-            Effect: "Allow"
-            Principal:
-              AWS: !Sub "arn:aws:iam::${SecondaryAccount}:root"
             Action:
               - "kms:CreateGrant"
               - "kms:ListGrant"

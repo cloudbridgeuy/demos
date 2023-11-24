@@ -277,7 +277,8 @@ create() {
 	tmp="$(mktemp)"
 	LAMBDA_CONTENTS="$(awk 'NR == 1 {print $0; next} {printf "          %s\n", $0}' "$rargs_lambda")"
 	export LAMBDA_CONTENTS
-	envsubst <"$rargs_template" >"$tmp"
+	# shellcheck disable=SC2016
+	envsubst '${LAMBDA_CONTENTS}' <"$rargs_template" >"$tmp"
 	echo "Attempting to create stack $rargs_stack_name" >&2
 	if ! $primary cloudformation create-stack \
 		--stack-name "$rargs_stack_name" \
@@ -1039,7 +1040,8 @@ update() {
 	tmp="$(mktemp)"
 	LAMBDA_CONTENTS="$(awk 'NR == 1 {print $0; next} {printf "          %s\n", $0}' "$rargs_lambda")"
 	export LAMBDA_CONTENTS
-	envsubst <"$rargs_template" >"$tmp"
+	# shellcheck disable=SC2016
+	envsubst '${LAMBDA_CONTENTS}' <"$rargs_template" >"$tmp"
 	change_set_name="$rargs_stack_name-change-set-$(date +%s)"
 	echo "Creating change set $change_set_name" >&2
 	$primary cloudformation create-change-set \
