@@ -1,7 +1,7 @@
 [
   {
     "ParameterKey": "AwsRegion",
-    "ParameterValue": "us-east-1"
+    "ParameterValue": "us-east-2"
   },
   {
     "ParameterKey": "PrimaryAccount",

@@ -124,20 +124,6 @@ Resources:
               - "kms:GenerateDataKey*"
               - "kms:DescribeKey"
             Resource: "*"
-          - Sid: "Permitir el uso con la cuenta de contingencia"
-            Effect: "Allow"
-            Principal:
-              AWS: !Sub "arn:aws:iam::${PrimaryAccount}:root"
-            Action:
-              - "kms:CreateGrant"
-              - "kms:ListGrant"
-              - "kms:RevokeGrant"
-              - "kms:Encrypt"
-              - "kms:Decrypt"
-              - "kms:ReEncrypt*"
-              - "kms:GenerateDataKey*"
-              - "kms:DescribeKey"
-            Resource: "*"
           - Sid: "Permitir a la funcion lambda del uso de la llave"
             Effect: "Allow"
             Principal:

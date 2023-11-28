@@ -76,8 +76,6 @@ def handler(event, _):
             )
         )
 
-        print("Evento enviado a la cuenta destino")
-
     return {
         "statusCode": 200,
         "body": json.dumps(responses, sort_keys=True, default=str),

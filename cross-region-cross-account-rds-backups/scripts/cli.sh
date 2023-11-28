@@ -13,24 +13,24 @@ fi
 set -e
 
 
-normalize_input() {
+normalize_rargs_input() {
   local arg flags
 
   while [[ $# -gt 0 ]]; do
     arg="$1"
     if [[ $arg =~ ^(--[a-zA-Z0-9_\-]+)=(.+)$ ]]; then
-      input+=("${BASH_REMATCH[1]}")
-      input+=("${BASH_REMATCH[2]}")
+      rargs_input+=("${BASH_REMATCH[1]}")
+      rargs_input+=("${BASH_REMATCH[2]}")
     elif [[ $arg =~ ^(-[a-zA-Z0-9])=(.+)$ ]]; then
-      input+=("${BASH_REMATCH[1]}")
-      input+=("${BASH_REMATCH[2]}")
+      rargs_input+=("${BASH_REMATCH[1]}")
+      rargs_input+=("${BASH_REMATCH[2]}")
     elif [[ $arg =~ ^-([a-zA-Z0-9][a-zA-Z0-9]+)$ ]]; then
       flags="${BASH_REMATCH[1]}"
       for ((i = 0; i < ${#flags}; i++)); do
-        input+=("-${flags:i:1}")
+        rargs_input+=("-${flags:i:1}")
       done
     else
-      input+=("$arg")
+      rargs_input+=("$arg")
     fi
 
     shift
@@ -39,7 +39,7 @@ normalize_input() {
 
 inspect_args() {
   prefix="rargs_"
-  args="$(set | grep ^$prefix || true)"
+  args="$(set | grep ^$prefix | grep -v rargs_run || true)"
   if [[ -n "$args" ]]; then
     echo
     echo args:
@@ -55,12 +55,12 @@ inspect_args() {
     for k in "${sorted_keys[@]}"; do echo "- \${deps[$k]} = ${deps[$k]}"; done
   fi
 
-  if ((${#other_args[@]})); then
+  if ((${#rargs_other_args[@]})); then
     echo
-    echo other_args:
-    echo "- \${other_args[*]} = ${other_args[*]}"
-    for i in "${!other_args[@]}"; do
-      echo "- \${other_args[$i]} = ${other_args[$i]}"
+    echo rargs_other_args:
+    echo "- \${rargs_other_args[*]} = ${rargs_other_args[*]}"
+    for i in "${!rargs_other_args[@]}"; do
+      echo "- \${rargs_other_args[$i]} = ${rargs_other_args[$i]}"
     done
   fi
 }
@@ -117,35 +117,35 @@ parse_arguments() {
   case $action in
     cold-start)
       action="cold-start"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     cross-account)
       action="cross-account"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     cross-region)
       action="cross-region"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     down)
       action="down"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     events)
       action="events"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     snapshots)
       action="snapshots"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     up)
       action="up"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     update)
       action="update"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     -h|--help)
       usage
@@ -189,7 +189,7 @@ cold-start() {
   local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./cold-start.sh"
 	# shellcheck disable=SC2068
 	# shellcheck disable=SC2154
-	"$sub" ${input[@]}
+	"$sub" ${rargs_input[@]}
 }
 cross-account_usage() {
   printf "Handle cross-region resources\n"
@@ -221,7 +221,7 @@ cross-account() {
   local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./cross-account.sh"
 	# shellcheck disable=SC2068
 	# shellcheck disable=SC2154
-	"$sub" ${input[@]}
+	"$sub" ${rargs_input[@]}
 }
 cross-region_usage() {
   printf "Handle cross-region resources\n"
@@ -253,7 +253,7 @@ cross-region() {
   local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./cross-region.sh"
 	# shellcheck disable=SC2068
 	# shellcheck disable=SC2154
-	"$sub" ${input[@]}
+	"$sub" ${rargs_input[@]}
 }
 down_usage() {
   printf "Destroy all the DEMO resources\n"
@@ -284,15 +284,15 @@ parse_down_arguments() {
     case "$key" in
       --)
         shift
-        other_args+=("$@")
+        rargs_other_args+=("$@")
         break
         ;;
       -?*)
-        other_args+=("$1")
+        rargs_other_args+=("$1")
         shift
         ;;
       *)
-        other_args+=("$1")
+        rargs_other_args+=("$1")
         shift
         ;;
     esac
@@ -349,7 +349,7 @@ events() {
   local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./events.sh"
 	# shellcheck disable=SC2068
 	# shellcheck disable=SC2154
-	"$sub" ${input[@]}
+	"$sub" ${rargs_input[@]}
 }
 snapshots_usage() {
   printf "Handle snapshots\n"
@@ -381,7 +381,7 @@ snapshots() {
   local sub="/Users/guzmanmonne/Projects/CloudBridge/demos/cross-region-cross-account-rds-backups/scripts/./snapshots.sh"
 	# shellcheck disable=SC2068
 	# shellcheck disable=SC2154
-	"$sub" ${input[@]}
+	"$sub" ${rargs_input[@]}
 }
 up_usage() {
   printf "Create all the DEMO resources\n"
@@ -412,15 +412,15 @@ parse_up_arguments() {
     case "$key" in
       --)
         shift
-        other_args+=("$@")
+        rargs_other_args+=("$@")
         break
         ;;
       -?*)
-        other_args+=("$1")
+        rargs_other_args+=("$1")
         shift
         ;;
       *)
-        other_args+=("$1")
+        rargs_other_args+=("$1")
         shift
         ;;
     esac
@@ -478,15 +478,15 @@ parse_update_arguments() {
     case "$key" in
       --)
         shift
-        other_args+=("$@")
+        rargs_other_args+=("$@")
         break
         ;;
       -?*)
-        other_args+=("$1")
+        rargs_other_args+=("$1")
         shift
         ;;
       *)
-        other_args+=("$1")
+        rargs_other_args+=("$1")
         shift
         ;;
     esac
@@ -515,12 +515,12 @@ update() {
 	$self cross-region update --primary-kms-key-arn "$primary_kms_key_arn" --lambda-function-arn "$lambda_function_arn"
 }
 
-run() {
+rargs_run() {
   declare -A deps=()
-  declare -a other_args=()
-  declare -a input=()
-  normalize_input "$@"
-  parse_arguments "${input[@]}"
+  declare -a rargs_other_args=()
+  declare -a rargs_input=()
+  normalize_rargs_input "$@"
+  parse_arguments "${rargs_input[@]}"
   # Check global dependencies
   
   for dependency in jq aws yq column; do
@@ -535,35 +535,35 @@ run() {
   # Call the right command action
   case "$action" in
     "cold-start")
-      cold-start "${input[@]}"
+      cold-start "${rargs_input[@]}"
       exit
       ;;
     "cross-account")
-      cross-account "${input[@]}"
+      cross-account "${rargs_input[@]}"
       exit
       ;;
     "cross-region")
-      cross-region "${input[@]}"
+      cross-region "${rargs_input[@]}"
       exit
       ;;
     "down")
-      down "${input[@]}"
+      down "${rargs_input[@]}"
       exit
       ;;
     "events")
-      events "${input[@]}"
+      events "${rargs_input[@]}"
       exit
       ;;
     "snapshots")
-      snapshots "${input[@]}"
+      snapshots "${rargs_input[@]}"
       exit
       ;;
     "up")
-      up "${input[@]}"
+      up "${rargs_input[@]}"
       exit
       ;;
     "update")
-      update "${input[@]}"
+      update "${rargs_input[@]}"
       exit
       ;;
     "")
@@ -575,4 +575,4 @@ run() {
   esac
 }
 
-run "$@"
+rargs_run "$@"

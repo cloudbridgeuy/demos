@@ -13,24 +13,24 @@ fi
 set -e
 
 
-normalize_input() {
+normalize_rargs_input() {
   local arg flags
 
   while [[ $# -gt 0 ]]; do
     arg="$1"
     if [[ $arg =~ ^(--[a-zA-Z0-9_\-]+)=(.+)$ ]]; then
-      input+=("${BASH_REMATCH[1]}")
-      input+=("${BASH_REMATCH[2]}")
+      rargs_input+=("${BASH_REMATCH[1]}")
+      rargs_input+=("${BASH_REMATCH[2]}")
     elif [[ $arg =~ ^(-[a-zA-Z0-9])=(.+)$ ]]; then
-      input+=("${BASH_REMATCH[1]}")
-      input+=("${BASH_REMATCH[2]}")
+      rargs_input+=("${BASH_REMATCH[1]}")
+      rargs_input+=("${BASH_REMATCH[2]}")
     elif [[ $arg =~ ^-([a-zA-Z0-9][a-zA-Z0-9]+)$ ]]; then
       flags="${BASH_REMATCH[1]}"
       for ((i = 0; i < ${#flags}; i++)); do
-        input+=("-${flags:i:1}")
+        rargs_input+=("-${flags:i:1}")
       done
     else
-      input+=("$arg")
+      rargs_input+=("$arg")
     fi
 
     shift
@@ -39,7 +39,7 @@ normalize_input() {
 
 inspect_args() {
   prefix="rargs_"
-  args="$(set | grep ^$prefix || true)"
+  args="$(set | grep ^$prefix | grep -v rargs_run || true)"
   if [[ -n "$args" ]]; then
     echo
     echo args:
@@ -55,12 +55,12 @@ inspect_args() {
     for k in "${sorted_keys[@]}"; do echo "- \${deps[$k]} = ${deps[$k]}"; done
   fi
 
-  if ((${#other_args[@]})); then
+  if ((${#rargs_other_args[@]})); then
     echo
-    echo other_args:
-    echo "- \${other_args[*]} = ${other_args[*]}"
-    for i in "${!other_args[@]}"; do
-      echo "- \${other_args[$i]} = ${other_args[$i]}"
+    echo rargs_other_args:
+    echo "- \${rargs_other_args[*]} = ${rargs_other_args[*]}"
+    for i in "${!rargs_other_args[@]}"; do
+      echo "- \${rargs_other_args[$i]} = ${rargs_other_args[$i]}"
     done
   fi
 }
@@ -119,35 +119,35 @@ parse_arguments() {
   case $action in
     create)
       action="create"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     destroy)
       action="destroy"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     log-groups)
       action="log-groups"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     log-streams)
       action="log-streams"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     logs)
       action="logs"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     status)
       action="status"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     track)
       action="track"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     update)
       action="update"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     -h|--help)
       usage
@@ -169,9 +169,14 @@ create_usage() {
   printf "  create -h|--help\n"
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -c --cross-account [<CROSS-ACCOUNT>]\n"
+  printf "    The name of the cross-account.\n"
+  printf "    [@default 794582806340]\n"
   printf "  -e --environment [<ENVIRONMENT>]\n"
   printf "    The name of the environment to depoy to.\n"
   printf "    [@default dev]\n"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to use.\n"
   printf "  --lambda-execution-role-arn [<LAMBDA-EXECUTION-ROLE-ARN>]\n"
   printf "    The ARN of the lambda execution role to use for the cross-region access.\n"
   printf "  -p --parameters [<PARAMETERS>]\n"
@@ -210,8 +215,16 @@ parse_create_arguments() {
         rargs_no_track=1
         shift
         ;;
+      -c | --cross-account)
+        rargs_cross_account="$2"
+        shift 2
+        ;;
       -e | --environment)
         rargs_environment="$2"
+        shift 2
+        ;;
+      -l | --lambda)
+        rargs_lambda="$2"
         shift 2
         ;;
       --lambda-execution-role-arn)
@@ -255,7 +268,9 @@ parse_create_arguments() {
 # Deploy the cross-region resources using CloudFormation
 create() {
   local rargs_no_track
+  local rargs_cross_account
   local rargs_environment
+  local rargs_lambda
   local rargs_lambda_execution_role_arn
   local rargs_parameters
   local rargs_principal_kms_key_arn
@@ -276,6 +291,11 @@ create() {
   fi
 
   
+    
+  if [[ -z "$rargs_cross_account" ]]; then
+    rargs_cross_account="794582806340"
+  fi
+    
     
   if [[ -z "$rargs_environment" ]]; then
     rargs_environment="dev"
@@ -301,10 +321,19 @@ create() {
 	if [[ -z "$rargs_lambda_execution_role_arn" ]]; then
 		rargs_lambda_execution_role_arn="$("$ROOT_DIRECTORY/events.sh" status | yq -r '.Outputs[] | select(.OutputKey == "LambdaExecutionRoleArn").OutputValue')"
 	fi
+	if [[ -z "$rargs_lambda" ]]; then
+		rargs_lambda="$ROOT_DIRECTORY/cross_region_rds_snapshot_share.py"
+	fi
+	tmp="$(mktemp)"
+	LAMBDA_CONTENTS="$(awk 'NR == 1 {print $0; next} {printf "          %s\n", $0}' "$rargs_lambda")"
+	export LAMBDA_CONTENTS
+	# shellcheck disable=SC2016
+	envsubst '${LAMBDA_CONTENTS}' <"$rargs_template" >"$tmp"
 	jo -a \
 		"$(jo ParameterKey=PrincipalKmsKeyArn ParameterValue="$rargs_principal_kms_key_arn")" \
 		"$(jo ParameterKey=AwsRegion ParameterValue="$rargs_region")" \
 		"$(jo ParameterKey=LambdaExecutionRoleArn ParameterValue="$rargs_lambda_execution_role_arn")" \
+		"$(jo ParameterKey=CrossAccount -s ParameterValue="$rargs_cross_account")" \
 		>"$rargs_parameters"
 	echo "Attempting to create stack $rargs_stack_name" >&2
 	if ! $primary2 cloudformation create-stack \
@@ -315,7 +344,7 @@ create() {
 		update \
 			--environment "$rargs_environment" \
 			--stack-name "$rargs_stack_name" \
-			--template "$rargs_template" \
+			--template "$tmp" \
 			--parameters "$rargs_parameters" \
 			--principal-kms-key-arn "$rargs_principal_kms_key_arn" \
 			--lambda-execution-role-arn "$rargs_lambda_execution_role_arn" \
@@ -868,9 +897,14 @@ update_usage() {
   printf "  update -h|--help\n"
 
   printf "\n\033[4m%s\033[0m\n" "Options:"
+  printf "  -c --cross-account [<CROSS-ACCOUNT>]\n"
+  printf "    The name of the cross-account.\n"
+  printf "    [@default 794582806340]\n"
   printf "  -e --environment [<ENVIRONMENT>]\n"
   printf "    The name of the environment to depoy to.\n"
   printf "    [@default dev]\n"
+  printf "  -l --lambda [<LAMBDA>]\n"
+  printf "    The name of the lambda function to use.\n"
   printf "  --lambda-execution-role-arn [<LAMBDA-EXECUTION-ROLE-ARN>]\n"
   printf "    The ARN of the lambda execution role to use for the cross-region access.\n"
   printf "  -p --parameters [<PARAMETERS>]\n"
@@ -909,8 +943,16 @@ parse_update_arguments() {
         rargs_no_track=1
         shift
         ;;
+      -c | --cross-account)
+        rargs_cross_account="$2"
+        shift 2
+        ;;
       -e | --environment)
         rargs_environment="$2"
+        shift 2
+        ;;
+      -l | --lambda)
+        rargs_lambda="$2"
         shift 2
         ;;
       --lambda-execution-role-arn)
@@ -954,7 +996,9 @@ parse_update_arguments() {
 # Update the cross-region resources using CloudFormation
 update() {
   local rargs_no_track
+  local rargs_cross_account
   local rargs_environment
+  local rargs_lambda
   local rargs_lambda_execution_role_arn
   local rargs_parameters
   local rargs_principal_kms_key_arn
@@ -975,6 +1019,11 @@ update() {
   fi
 
   
+    
+  if [[ -z "$rargs_cross_account" ]]; then
+    rargs_cross_account="794582806340"
+  fi
+    
     
   if [[ -z "$rargs_environment" ]]; then
     rargs_environment="dev"
@@ -1000,16 +1049,25 @@ update() {
 	if [[ -z "$rargs_lambda_execution_role_arn" ]]; then
 		rargs_lambda_execution_role_arn="$("$ROOT_DIRECTORY/events.sh" status | yq -r '.Outputs[] | select(.OutputKey == "LambdaExecutionRoleArn").OutputValue')"
 	fi
+	if [[ -z "$rargs_lambda" ]]; then
+		rargs_lambda="$ROOT_DIRECTORY/cross_region_rds_snapshot_share.py"
+	fi
+	tmp="$(mktemp)"
+	LAMBDA_CONTENTS="$(awk 'NR == 1 {print $0; next} {printf "          %s\n", $0}' "$rargs_lambda")"
+	export LAMBDA_CONTENTS
+	# shellcheck disable=SC2016
+	envsubst '${LAMBDA_CONTENTS}' <"$rargs_template" >"$tmp"
 	jo -a \
 		"$(jo ParameterKey=PrincipalKmsKeyArn ParameterValue="$rargs_principal_kms_key_arn")" \
 		"$(jo ParameterKey=AwsRegion ParameterValue="$rargs_region")" \
 		"$(jo ParameterKey=LambdaExecutionRoleArn ParameterValue="$rargs_lambda_execution_role_arn")" \
+		"$(jo ParameterKey=CrossAccount -s ParameterValue="$rargs_cross_account")" \
 		>"$rargs_parameters"
 	change_set_name="$rargs_stack_name-change-set-$(date +%s)"
 	echo "Creating change set $change_set_name" >&2
 	$primary2 cloudformation create-change-set \
 		--stack-name "$rargs_stack_name" \
-		--template-body "file://$rargs_template" \
+		--template-body "file://$tmp" \
 		--parameters "file://$rargs_parameters" \
 		--change-set-name "$change_set_name" \
 		--capabilities CAPABILITY_NAMED_IAM
@@ -1031,43 +1089,43 @@ update() {
 	exit $?
 }
 
-run() {
+rargs_run() {
   declare -A deps=()
-  declare -a input=()
-  normalize_input "$@"
-  parse_arguments "${input[@]}"
+  declare -a rargs_input=()
+  normalize_rargs_input "$@"
+  parse_arguments "${rargs_input[@]}"
   # Call the right command action
   case "$action" in
     "create")
-      create "${input[@]}"
+      create "${rargs_input[@]}"
       exit
       ;;
     "destroy")
-      destroy "${input[@]}"
+      destroy "${rargs_input[@]}"
       exit
       ;;
     "log-groups")
-      log-groups "${input[@]}"
+      log-groups "${rargs_input[@]}"
       exit
       ;;
     "log-streams")
-      log-streams "${input[@]}"
+      log-streams "${rargs_input[@]}"
       exit
       ;;
     "logs")
-      logs "${input[@]}"
+      logs "${rargs_input[@]}"
       exit
       ;;
     "status")
-      status "${input[@]}"
+      status "${rargs_input[@]}"
       exit
       ;;
     "track")
-      track "${input[@]}"
+      track "${rargs_input[@]}"
       exit
       ;;
     "update")
-      update "${input[@]}"
+      update "${rargs_input[@]}"
       exit
       ;;
     "")
@@ -1079,4 +1137,4 @@ run() {
   esac
 }
 
-run "$@"
+rargs_run "$@"

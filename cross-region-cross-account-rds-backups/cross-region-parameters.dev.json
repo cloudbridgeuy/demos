@@ -1,1 +1,14 @@
-[{"ParameterKey":"PrincipalKmsKeyArn","ParameterValue":"arn:aws:kms:us-east-1:751594288501:key/mrk-59c17d4a274a408dbc7756a7483ac9a2"},{"ParameterKey":"AwsRegion","ParameterValue":"us-east-2"},{"ParameterKey":"LambdaExecutionRoleArn","ParameterValue":"arn:aws:iam::751594288501:role/cross-region-cross-account-rds--LambdaExecutionRole-WHsuXJeL3z1a"}]
+[
+  {
+    "ParameterKey": "PrincipalKmsKeyArn",
+    "ParameterValue": "arn:aws:kms:us-east-1:751594288501:key/mrk-87b4354e87824fc198a7a4fa04651324"
+  },
+  {
+    "ParameterKey": "AwsRegion",
+    "ParameterValue": "us-east-2"
+  },
+  {
+    "ParameterKey": "LambdaExecutionRoleArn",
+    "ParameterValue": "arn:aws:iam::751594288501:role/cross-region-cross-account-rds--LambdaExecutionRole-lhEfCekUlXKp"
+  }
+]

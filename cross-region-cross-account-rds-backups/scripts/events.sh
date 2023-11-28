@@ -13,24 +13,24 @@ fi
 set -e
 
 
-normalize_input() {
+normalize_rargs_input() {
   local arg flags
 
   while [[ $# -gt 0 ]]; do
     arg="$1"
     if [[ $arg =~ ^(--[a-zA-Z0-9_\-]+)=(.+)$ ]]; then
-      input+=("${BASH_REMATCH[1]}")
-      input+=("${BASH_REMATCH[2]}")
+      rargs_input+=("${BASH_REMATCH[1]}")
+      rargs_input+=("${BASH_REMATCH[2]}")
     elif [[ $arg =~ ^(-[a-zA-Z0-9])=(.+)$ ]]; then
-      input+=("${BASH_REMATCH[1]}")
-      input+=("${BASH_REMATCH[2]}")
+      rargs_input+=("${BASH_REMATCH[1]}")
+      rargs_input+=("${BASH_REMATCH[2]}")
     elif [[ $arg =~ ^-([a-zA-Z0-9][a-zA-Z0-9]+)$ ]]; then
       flags="${BASH_REMATCH[1]}"
       for ((i = 0; i < ${#flags}; i++)); do
-        input+=("-${flags:i:1}")
+        rargs_input+=("-${flags:i:1}")
       done
     else
-      input+=("$arg")
+      rargs_input+=("$arg")
     fi
 
     shift
@@ -39,7 +39,7 @@ normalize_input() {
 
 inspect_args() {
   prefix="rargs_"
-  args="$(set | grep ^$prefix || true)"
+  args="$(set | grep ^$prefix | grep -v rargs_run || true)"
   if [[ -n "$args" ]]; then
     echo
     echo args:
@@ -55,12 +55,12 @@ inspect_args() {
     for k in "${sorted_keys[@]}"; do echo "- \${deps[$k]} = ${deps[$k]}"; done
   fi
 
-  if ((${#other_args[@]})); then
+  if ((${#rargs_other_args[@]})); then
     echo
-    echo other_args:
-    echo "- \${other_args[*]} = ${other_args[*]}"
-    for i in "${!other_args[@]}"; do
-      echo "- \${other_args[$i]} = ${other_args[$i]}"
+    echo rargs_other_args:
+    echo "- \${rargs_other_args[*]} = ${rargs_other_args[*]}"
+    for i in "${!rargs_other_args[@]}"; do
+      echo "- \${rargs_other_args[$i]} = ${rargs_other_args[$i]}"
     done
   fi
 }
@@ -121,39 +121,39 @@ parse_arguments() {
   case $action in
     create)
       action="create"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     destroy)
       action="destroy"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     log-groups)
       action="log-groups"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     log-streams)
       action="log-streams"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     logs)
       action="logs"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     send)
       action="send"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     status)
       action="status"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     track)
       action="track"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     update)
       action="update"
-      input=("${input[@]:1}")
+      rargs_input=("${rargs_input[@]:1}")
       ;;
     -h|--help)
       usage
@@ -1069,47 +1069,47 @@ update() {
 	exit $?
 }
 
-run() {
+rargs_run() {
   declare -A deps=()
-  declare -a input=()
-  normalize_input "$@"
-  parse_arguments "${input[@]}"
+  declare -a rargs_input=()
+  normalize_rargs_input "$@"
+  parse_arguments "${rargs_input[@]}"
   # Call the right command action
   case "$action" in
     "create")
-      create "${input[@]}"
+      create "${rargs_input[@]}"
       exit
       ;;
     "destroy")
-      destroy "${input[@]}"
+      destroy "${rargs_input[@]}"
       exit
       ;;
     "log-groups")
-      log-groups "${input[@]}"
+      log-groups "${rargs_input[@]}"
       exit
       ;;
     "log-streams")
-      log-streams "${input[@]}"
+      log-streams "${rargs_input[@]}"
       exit
       ;;
     "logs")
-      logs "${input[@]}"
+      logs "${rargs_input[@]}"
       exit
       ;;
     "send")
-      send "${input[@]}"
+      send "${rargs_input[@]}"
       exit
       ;;
     "status")
-      status "${input[@]}"
+      status "${rargs_input[@]}"
       exit
       ;;
     "track")
-      track "${input[@]}"
+      track "${rargs_input[@]}"
       exit
       ;;
     "update")
-      update "${input[@]}"
+      update "${rargs_input[@]}"
       exit
       ;;
     "")
@@ -1121,4 +1121,4 @@ run() {
   esac
 }
 
-run "$@"
+rargs_run "$@"

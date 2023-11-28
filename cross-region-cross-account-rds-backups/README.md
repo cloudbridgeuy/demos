@@ -226,7 +226,7 @@ Primero, ir a EventBridge. Luego `Event Buses` y seleccionar el bus `default`. E
 }
 ```
 
-Ahora tenemos que ir a EventBridge en la cuenta principal.
+Ahora tenemos que ir a EventBridge en la cuenta principal y región de contingencia.
 
 > **Importante**: Recordar que tenemos que utilizar la misma región en ambos casos. Específicamente, debemos usar la región de _contingencia_.
 
